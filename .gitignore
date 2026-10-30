@@ -1,0 +1,10 @@
+data/
+.env
+.env.*
+screenshots/
+__pycache__/
+*.pyc
+.venv/
+lp_jobs/
+*.log
+*.pid

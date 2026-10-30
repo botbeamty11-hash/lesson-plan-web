@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: lesson-plan-web
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 120
+    healthCheckPath: /healthz
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.13.5
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: WORKER_TOKEN
+        sync: false
+      - key: SECRET_KEY
+        generateValue: true
+      - key: WEBHOOK_URL
+        sync: false

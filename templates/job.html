@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block title %}สถานะงาน {{ job.id }}{% endblock %}
+{% block content %}
+<div class="card center">
+  <div id="vis"><div class="spinner"></div></div>
+  <h1 id="headline">กำลังรอคิว...</h1>
+  <p class="sub" id="subline">กรุณาเปิดหน้านี้ไว้ ระบบจะอัปเดตสถานะอัตโนมัติ</p>
+  <span class="badge b-queued" id="badge">รอคิว</span>
+  <div class="steps">
+    <div class="step" data-s="queued"><div class="dot">1</div>รอคิว</div>
+    <div class="step" data-s="processing"><div class="dot">2</div>กำลังทำ</div>
+    <div class="step" data-s="done"><div class="dot">3</div>เสร็จแล้ว</div>
+  </div>
+  <div class="stats" id="stats">
+    <div class="stat"><div class="v" id="pos">-</div><div class="k">ลำดับคิว</div></div>
+    <div class="stat"><div class="v" id="ahead">-</div><div class="k">งานก่อนหน้า</div></div>
+    <div class="stat"><div class="v" id="eta">-</div><div class="k">เวลาที่คาดว่าจะเสร็จ (โดยประมาณ)</div></div>
+  </div>
+  <div class="actions" id="dl" style="justify-content:center;display:none"></div>
+  <div class="flash warn" id="keep" style="display:none;margin-top:18px">⚠️ <b>กรุณาดาวน์โหลดไฟล์เก็บไว้ทันที ไฟล์จะถูกลบอัตโนมัติภายหลัง</b></div>
+  <p class="hint" id="upd"></p>
+</div>
+<div class="card">
+  <h3 style="margin-top:0">รายละเอียดงาน</h3>
+  <dl class="meta">
+    <dt>รหัสงาน</dt><dd class="mono">{{ job.id }}</dd>
+    <dt>ไฟล์ที่ 1 (ฟอร์มโรงเรียน)</dt><dd>{{ job.files.template_original_name or '-' }}</dd>
+    <dt>ไฟล์ที่ 2 (ไฟล์ข้อมูล)</dt><dd>{{ job.files.source_original_name }}</dd>
+    {% if teach_date %}<dt>สอนวันที่</dt><dd>{{ teach_date }}</dd>{% endif %}
+    {% for k, v in job.fields.items() %}{% if v and not k.startswith('teach_') %}<dt>{{ labels.get(k, k) }}</dt><dd>{{ v }}</dd>{% endif %}{% endfor %}
+    {% if job.note %}<dt>หมายเหตุ</dt><dd style="white-space:pre-wrap">{{ job.note }}</dd>{% endif %}
+  </dl>
+  <p class="hint">บันทึกลิงก์หน้านี้ไว้เพื่อกลับมาดาวน์โหลดภายหลังได้</p>
+</div>
+{% endblock %}
+{% block scripts %}<script>
+const ID={{ job.id|tojson }};const $=i=>document.getElementById(i);
+const ORDER=['queued','processing','done'];
+function render(d){
+  const s=d.status;$('badge').className='badge b-'+s;$('badge').textContent=d.status_th;
+  document.querySelectorAll('.step').forEach(el=>{const i=ORDER.indexOf(el.dataset.s),c=ORDER.indexOf(s==='failed'?'processing':s);el.classList.toggle('on',i<=c)});
+  if(s==='queued'||s==='processing'){
+    $('headline').textContent=s==='queued'?'กำลังรอคิว...':'กำลังจัดทำแผนการจัดการเรียนรู้...';
+    $('subline').textContent='กรุณาเปิดหน้านี้ไว้ ระบบจะอัปเดตสถานะอัตโนมัติทุก 5 วินาที';
+    $('pos').textContent=s==='queued'?d.queue_position:'กำลังทำ';
+    $('ahead').textContent=d.jobs_ahead+' งาน';
+    $('eta').textContent='~'+d.eta_minutes+' นาที';
+    $('stats').style.display='';
+  } else {
+    $('stats').style.display='none';
+    if(s==='done'){
+      $('vis').innerHTML='<div class="done-ic">✅</div>';$('headline').textContent='จัดทำแผนเสร็จเรียบร้อยแล้ว';
+      $('subline').textContent='ดาวน์โหลดไฟล์ผลลัพธ์ได้ด้านล่าง';
+      let h='';if(d.has_docx)h+=`<a class="btn big" href="/job/${ID}/download/docx">⬇️ ดาวน์โหลด Word (.docx)</a>`;
+      if(d.has_pdf)h+=`<a class="btn big sec" href="/job/${ID}/download/pdf">⬇️ ดาวน์โหลด PDF</a>`;
+      $('dl').innerHTML=h;$('dl').style.display='flex';$('keep').style.display='';
+    } else {
+      $('vis').innerHTML='<div class="done-ic">⚠️</div>';$('headline').textContent='เกิดข้อผิดพลาด';
+      $('subline').textContent=d.error||'ไม่สามารถดำเนินการได้';
+      $('dl').innerHTML='<a class="btn" href="/">ส่งงานใหม่</a>';$('dl').style.display='flex';
+    }
+  }
+  $('upd').textContent='อัปเดตล่าสุด '+new Date().toLocaleTimeString('th-TH')+(d.status==='queued'||d.status==='processing'?' · เวลาเฉลี่ยต่องาน '+d.avg_minutes+' นาที':'');
+  return s==='done'||s==='failed';
+}
+async function poll(){try{const r=await fetch('/api/job/'+ID,{cache:'no-store'});if(r.ok){if(render(await r.json()))return}}catch(e){}
+ setTimeout(poll,5000)}
+poll();
+</script>{% endblock %}

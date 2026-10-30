@@ -1,0 +1,5 @@
+{% extends "base.html" %}{% block title %}ผู้ดูแลระบบ{% endblock %}
+{% block content %}<form class="card" method="post" style="max-width:420px;margin:auto">
+<h1>เข้าสู่ระบบผู้ดูแล</h1><p class="sub">สำหรับจัดการแม่แบบแผนการจัดการเรียนรู้</p>
+<input type="hidden" name="action" value="login"><label>รหัสผ่าน</label><input type="password" name="password" required autofocus>
+<div class="actions"><button class="btn">เข้าสู่ระบบ</button></div></form>{% endblock %}

@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block content %}
+<form class="card" method="post" action="/submit" enctype="multipart/form-data" id="f" novalidate>
+  <h1>ส่งข้อมูลเพื่อจัดทำแผนการจัดการเรียนรู้</h1>
+  <p class="sub">ต้องอัปโหลด 2 ไฟล์: ฟอร์มแผนการสอนของโรงเรียน และไฟล์ข้อมูลต้นฉบับ ระบบจะนำข้อมูลมาจัดลงฟอร์มของโรงเรียนให้</p>
+  <div class="grid">
+  {% for key, label in uploads %}
+  <div>
+    <label>{{ label }} <span class="req">*</span><br><span class="opt">.doc, .docx, .pdf ไม่เกิน {{ max_mb }} MB</span></label>
+    <div class="drop" data-for="{{ key }}">
+      <div class="ic">{% if key == 'template' %}🏫{% else %}📄{% endif %}</div>
+      <div><b>คลิกเพื่อเลือกไฟล์</b><br>หรือลากไฟล์มาวางที่นี่</div>
+      <div class="fn"></div>
+      <input type="file" name="{{ key }}" id="{{ key }}" accept=".doc,.docx,.pdf">
+    </div>
+  </div>
+  {% endfor %}
+  </div>
+  <h3 style="margin:28px 0 10px">รายละเอียดแผน <span class="hint" style="font-weight:400">(ไม่บังคับ)</span></h3>
+  <div class="note">ℹ️ <b>ช่องด้านล่างทั้งหมดไม่บังคับ — ไม่กรอกก็ได้</b><br>ช่องที่เว้นว่างไว้ จะคงเว้นว่างไว้ในแผนการสอนตามฟอร์มของโรงเรียนเหมือนเดิม (บังคับเฉพาะไฟล์ที่ 1 และไฟล์ที่ 2)</div>
+  <div class="grid">
+    <div><label for="teacher">ชื่อผู้สอน</label><input type="text" id="teacher" name="teacher" placeholder="ชื่อ-นามสกุล"></div>
+    <div><label>สอนวันที่</label>
+      <div class="dt">
+        <select name="teach_day" aria-label="วัน"><option value="">วัน</option>{% for d in range(1,32) %}<option value="{{ d }}">{{ d }}</option>{% endfor %}</select>
+        <select name="teach_month" aria-label="เดือน"><option value="">เดือน</option>{% for m in months %}<option value="{{ m }}">{{ m }}</option>{% endfor %}</select>
+        <select name="teach_year" aria-label="ปี พ.ศ."><option value="">ปี พ.ศ.</option>{% for y in years %}<option value="{{ y }}">{{ y }}</option>{% endfor %}</select>
+      </div></div>
+    {% for key, label, typ in fields if key != 'teacher' %}
+    <div><label for="{{ key }}">{{ label }}</label>
+      <input type="{{ typ }}" id="{{ key }}" name="{{ key }}" {% if typ=='number' %}min="1"{% endif %}
+        placeholder="{% if key=='semester' %}เช่น 1 หรือ 2{% elif key=='year' %}เช่น {{ this_year }}{% elif key=='plan_no' %}เช่น 1{% elif key=='unit_no' %}เช่น 1{% endif %}"></div>
+    {% endfor %}
+    <div class="full"><label for="note">หมายเหตุเพิ่มเติม</label>
+      <textarea id="note" name="note" placeholder="รายละเอียดหรือคำขอพิเศษ เช่น เน้นกิจกรรมกลุ่ม, ระบุชั้นเรียน ฯลฯ"></textarea></div>
+  </div>
+  <div class="flash" id="err" style="display:none;margin-top:18px"></div>
+  <div class="actions"><button class="btn big" id="sb" type="submit">📤 ส่งข้อมูล</button></div>
+</form>
+{% endblock %}
+{% block scripts %}<script>
+const MAX={{ max_mb }}*1048576, OK=['doc','docx','pdf'];
+document.querySelectorAll('.drop').forEach(drop=>{
+  const inp=drop.querySelector('input'),fn=drop.querySelector('.fn');
+  const show=()=>{const f=inp.files[0];drop.classList.remove('bad');
+    if(!f){fn.textContent='';drop.classList.remove('has');return}
+    const ext=f.name.split('.').pop().toLowerCase();
+    if(!OK.includes(ext)){alert('รองรับเฉพาะไฟล์ .doc, .docx และ .pdf');inp.value='';fn.textContent='';drop.classList.remove('has');return}
+    if(f.size>MAX){alert('ไฟล์ใหญ่เกินไป (สูงสุด {{ max_mb }} MB)');inp.value='';fn.textContent='';drop.classList.remove('has');return}
+    fn.textContent='✔ '+f.name+' ('+(f.size/1048576).toFixed(2)+' MB)';drop.classList.add('has')};
+  drop.addEventListener('click',()=>inp.click());inp.addEventListener('click',e=>e.stopPropagation());
+  inp.addEventListener('change',show);
+  ['dragover','dragenter'].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.add('over')}));
+  ['dragleave','drop'].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.remove('over')}));
+  drop.addEventListener('drop',ev=>{if(ev.dataTransfer.files.length){inp.files=ev.dataTransfer.files;show()}});
+});
+document.getElementById('f').addEventListener('submit',e=>{
+  const miss=[];[['template','ไฟล์ที่ 1 (ฟอร์มแผนการสอนของโรงเรียน)'],['source','ไฟล์ที่ 2 (ไฟล์ข้อมูล)']].forEach(([id,n])=>{
+    const i=document.getElementById(id);if(!i.files.length){miss.push(n);i.closest('.drop').classList.add('bad')}});
+  const err=document.getElementById('err');
+  if(miss.length){e.preventDefault();err.textContent='กรุณาเลือก'+miss.join(' และ ');err.style.display='';err.scrollIntoView({behavior:'smooth',block:'center'});return}
+  err.style.display='none';const b=document.getElementById('sb');b.disabled=true;b.textContent='⏳ กำลังอัปโหลด...'});
+</script>{% endblock %}

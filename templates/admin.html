@@ -1,0 +1,16 @@
+{% extends "base.html" %}{% block title %}ผู้ดูแลระบบ{% endblock %}
+{% block content %}
+<div class="card"><div style="display:flex;justify-content:space-between;align-items:center"><h1>ผู้ดูแลระบบ</h1>
+<form method="post" action="/admin/logout"><button class="btn sec">ออกจากระบบ</button></form></div>
+<p class="hint">ผู้ใช้ต้องอัปโหลดฟอร์มของโรงเรียนเองทุกครั้ง แม่แบบด้านล่างใช้เป็นสำรองภายในเท่านั้น (กรณีงานไม่มีฟอร์มแนบ)</p>
+{% if tpl %}<p class="sub">แม่แบบสำรอง: main.docx ({{ tpl.size_kb }} KB, อัปเดต {{ tpl.mtime }}) · <a href="/admin/template">ดาวน์โหลด</a></p>
+{% else %}<p class="flash">ยังไม่มีแม่แบบ</p>{% endif %}
+<form method="post" enctype="multipart/form-data"><input type="hidden" name="action" value="upload">
+<label>อัปโหลด/แทนที่แม่แบบสำรอง (.docx)</label><input type="file" name="template" accept=".docx" required>
+<div class="actions"><button class="btn">อัปโหลดแม่แบบ</button></div></form></div>
+<div class="card"><h3 style="margin-top:0">งานล่าสุด</h3>
+<div style="overflow-x:auto"><table><tr><th>รหัสงาน</th><th>สถานะ</th><th>ส่งเมื่อ</th><th>ผู้สอน</th><th>ฟอร์มโรงเรียน</th><th>แผนที่</th></tr>
+{% for j in jobs %}<tr><td class="mono"><a href="/job/{{ j.id }}">{{ j.id }}</a></td><td><span class="badge b-{{ j.status }}">{{ status_th[j.status] }}</span></td>
+<td>{{ j.created_at[:16].replace('T',' ') }}</td><td>{{ j.fields.teacher or '-' }}</td><td>{{ j.files.template_original_name or '-' }}</td><td>{{ j.fields.plan_no or '-' }}</td></tr>
+{% else %}<tr><td colspan="6" class="hint">ยังไม่มีงาน</td></tr>{% endfor %}</table></div></div>
+{% endblock %}
