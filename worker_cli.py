@@ -17,6 +17,19 @@ def out(obj):
     print(json.dumps(obj, ensure_ascii=False, indent=2))
 
 
+
+def short_flags(j):
+    """Compact markers for list output: [ไม่มีไฟล์ข้อมูล] [ภาพ] [ใบงาน] [แก้คำ] [คำสั่ง: ...]"""
+    opts = j.get("options") or []
+    fl = []
+    if j.get("from_scratch"): fl.append("[ไม่มีไฟล์ข้อมูล]")
+    for full, short in (("ทำภาพประกอบเพิ่ม", "ภาพ"), ("ทำใบงาน/ใบความรู้แนบท้าย", "ใบงาน"),
+                        ("แก้คำผิดและเนื้อหาที่ผิด", "แก้คำ")):
+        if full in opts: fl.append(f"[{short}]")
+    ins = (j.get("instructions") or j.get("note") or "").replace("\n", " ").strip()
+    if ins: fl.append("[คำสั่ง: " + (ins[:40] + "…" if len(ins) > 40 else ins) + "]")
+    return " ".join(fl)
+
 def main(argv):
     if not argv or argv[0] in ("-h", "--help", "help"):
         print(__doc__); return 0
@@ -27,7 +40,7 @@ def main(argv):
             jobs = [j for j in jobs if j["status"] in ("queued", "processing")]
         for j in jobs:
             f = j["fields"]
-            print(f'{j["id"]}  {j["status"]:<10}  {j["created_at"]}  จำนวนแผน={j.get("plan_count") or 1}  ทำ={("แผนที่ " + str(j.get("plan_selected"))) if j.get("plan_mode") == "one" else "ทั้งหมด"}  แผนที่={f.get("plan_no") or "-"}  ผู้สอน={f.get("teacher") or "-"}  ฟอร์ม={j["files"].get("template_original_name") or "-"}  ข้อมูล={j["files"]["source_original_name"]}')
+            print(f'{j["id"]}  {j["status"]:<10}  {j["created_at"]}  จำนวนแผน={j.get("plan_count") or 1}  ทำ={("แผนที่ " + str(j.get("plan_selected"))) if j.get("plan_mode") == "one" else "ทั้งหมด"}  แผนที่={f.get("plan_no") or "-"}  ผู้สอน={f.get("teacher") or "-"}  ฟอร์ม={j["files"].get("template_original_name") or "-"}  ข้อมูล={j["files"].get("source_original_name") or "-"}  {short_flags(j)}'.rstrip())
         if not jobs:
             print("(ไม่มีงาน)")
         return 0

@@ -26,12 +26,13 @@
   <dl class="meta">
     <dt>รหัสงาน</dt><dd class="mono">{{ job.id }}</dd>
     <dt>ไฟล์ที่ 1 (ฟอร์มโรงเรียน)</dt><dd>{{ job.files.template_original_name or '-' }}</dd>
-    <dt>ไฟล์ที่ 2 (ไฟล์ข้อมูล)</dt><dd>{{ job.files.source_original_name }}</dd>
-    <dt>จำนวนแผนในไฟล์ข้อมูล</dt><dd>{{ job.get('plan_count') or 1 }} แผน{% if job.get('plan_numbers') and job.plan_numbers|length > 1 %} (แผนที่ {{ job.plan_numbers|join(', ') }}){% endif %}</dd>
+    <dt>ไฟล์ที่ 2 (ไฟล์ข้อมูล)</dt><dd>{{ job.files.source_original_name or 'ไม่ได้แนบ (จัดทำจากคำสั่งเพิ่มเติม)' }}</dd>
+    {% if job.files.source %}<dt>จำนวนแผนในไฟล์ข้อมูล</dt><dd>{{ job.get('plan_count') or 1 }} แผน{% if job.get('plan_numbers') and job.plan_numbers|length > 1 %} (แผนที่ {{ job.plan_numbers|join(', ') }}){% endif %}</dd>{% endif %}
+    {% if instructions %}<dt>คำสั่งเพิ่มเติมถึงผู้จัดทำ</dt><dd style="white-space:pre-wrap">{{ instructions }}</dd>{% endif %}
+    {% if job.get('options') %}<dt>ตัวเลือกเพิ่มเติม</dt><dd>{% for o in job.options %}<span class="tag">✔ {{ o }}</span> {% endfor %}</dd>{% endif %}
     {% if plan_choice %}<dt>แผนที่จะจัดทำ</dt><dd>{{ plan_choice }}</dd>{% endif %}
     {% if teach_date %}<dt>สอนวันที่</dt><dd>{{ teach_date }}</dd>{% endif %}
     {% for k, v in job.fields.items() %}{% if v and not k.startswith('teach_') %}<dt>{{ labels.get(k, k) }}</dt><dd>{{ v }}</dd>{% endif %}{% endfor %}
-    {% if job.note %}<dt>หมายเหตุ</dt><dd style="white-space:pre-wrap">{{ job.note }}</dd>{% endif %}
   </dl>
   <p class="hint">บันทึกลิงก์หน้านี้ไว้เพื่อกลับมาดาวน์โหลดภายหลังได้</p>
 </div>
@@ -49,7 +50,8 @@ function render(d){
     $('ahead').textContent=d.jobs_ahead+' งาน';
     $('eta').textContent='~'+d.eta_minutes+' นาที';
     const pl=[];if(d.detected_plan_count>1)pl.push('พบ '+d.detected_plan_count+' แผนในไฟล์ข้อมูล');if(d.plan_choice_th)pl.push(d.plan_choice_th);
-    pl.push('ประมาณ '+Math.max(1,Math.round(d.job_minutes))+' นาทีสำหรับงานนี้ ('+d.plan_count+' แผน × '+d.avg_minutes_per_plan+' นาที)');
+    if(d.from_scratch)pl.push('ไม่มีไฟล์ข้อมูล จัดทำจากคำสั่งเพิ่มเติม');
+    pl.push('ประมาณ '+Math.max(1,Math.round(d.job_minutes))+' นาทีสำหรับงานนี้ ('+d.plan_count+' แผน × '+d.avg_minutes_per_plan+' นาที'+(d.eta_factor>1?' × '+d.eta_factor+' เพราะ'+(d.from_scratch?'ไม่มีไฟล์ข้อมูล':'ทำภาพประกอบเพิ่ม'):'')+')');
     $('plans').textContent=pl.join(' · ');$('plans').style.display='';
     $('stats').style.display='';
   } else {

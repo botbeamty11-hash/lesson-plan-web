@@ -2,11 +2,11 @@
 {% block content %}
 <form class="card" method="post" action="/submit" enctype="multipart/form-data" id="f" novalidate>
   <h1>ส่งข้อมูลเพื่อจัดทำแผนการจัดการเรียนรู้</h1>
-  <p class="sub">ต้องอัปโหลด 2 ไฟล์: ฟอร์มแผนการสอนของโรงเรียน และไฟล์ข้อมูลต้นฉบับ ระบบจะนำข้อมูลมาจัดลงฟอร์มของโรงเรียนให้</p>
+  <p class="sub">อัปโหลดฟอร์มแผนการสอนของโรงเรียน (บังคับ) และไฟล์ข้อมูลต้นฉบับ (ถ้ามี) ระบบจะนำข้อมูลมาจัดลงฟอร์มของโรงเรียนให้ — ถ้าไม่มีไฟล์ข้อมูล ให้พิมพ์คำสั่งเพิ่มเติมว่าต้องการแผนวิชา/ชั้น/เรื่องอะไร</p>
   <div class="grid">
   {% for key, label in uploads %}
   <div>
-    <label>{{ label }} <span class="req">*</span><br><span class="opt">.doc, .docx, .pdf ไม่เกิน {{ max_mb }} MB</span></label>
+    <label>{{ label }} {% if key in required_uploads %}<span class="req">*</span>{% else %}<span class="opt">(ไม่บังคับ)</span>{% endif %}<br><span class="opt">.doc, .docx, .pdf ไม่เกิน {{ max_mb }} MB{% if key not in required_uploads %} · ถ้าไม่แนบ ต้องพิมพ์คำสั่งเพิ่มเติมด้านล่าง{% endif %}</span></label>
     <div class="drop" data-for="{{ key }}">
       <div class="ic">{% if key == 'template' %}🏫{% else %}📄{% endif %}</div>
       <div><b>คลิกเพื่อเลือกไฟล์</b><br>หรือลากไฟล์มาวางที่นี่</div>
@@ -16,8 +16,15 @@
   </div>
   {% endfor %}
   </div>
+  <h3 style="margin:28px 0 10px">คำสั่งเพิ่มเติมถึงผู้จัดทำ <span class="hint" style="font-weight:400" id="instr-req">(ไม่บังคับ ถ้าแนบไฟล์ข้อมูลแล้ว)</span></h3>
+  <textarea id="instructions" name="instructions" class="big-ta" rows="7"
+    placeholder="ตัวอย่าง:&#10;• เพิ่มภาพประกอบ&#10;• ปรับกิจกรรมให้สั้นลง&#10;• ทำแผนที่ 1 เรื่อง เศษส่วน ป.4&#10;(ถ้าไม่แนบไฟล์ข้อมูล กรุณาระบุอย่างน้อย วิชา / ชั้น / เรื่อง)"></textarea>
+  <div class="opts">
+    {% for o in options %}<label class="chk"><input type="checkbox" name="options" value="{{ o }}"> {{ o }}</label>{% endfor %}
+  </div>
+  <p class="hint" id="slow-hint" style="display:none">⏱️ งานที่ไม่มีไฟล์ข้อมูล หรือเลือก "ทำภาพประกอบเพิ่ม" จะใช้เวลานานขึ้นประมาณ 1.5 เท่า</p>
   <h3 style="margin:28px 0 10px">รายละเอียดแผน <span class="hint" style="font-weight:400">(ไม่บังคับ)</span></h3>
-  <div class="note">ℹ️ <b>ช่องด้านล่างทั้งหมดไม่บังคับ — ไม่กรอกก็ได้</b><br>ช่องที่เว้นว่างไว้ จะคงเว้นว่างไว้ในแผนการสอนตามฟอร์มของโรงเรียนเหมือนเดิม (บังคับเฉพาะไฟล์ที่ 1 และไฟล์ที่ 2)</div>
+  <div class="note">ℹ️ <b>ช่องด้านล่างทั้งหมดไม่บังคับ — ไม่กรอกก็ได้</b><br>ช่องที่เว้นว่างไว้ จะคงเว้นว่างไว้ในแผนการสอนตามฟอร์มของโรงเรียนเหมือนเดิม (บังคับเฉพาะไฟล์ที่ 1 — ถ้าไม่แนบไฟล์ที่ 2 ต้องพิมพ์คำสั่งเพิ่มเติมด้านบน)</div>
   <div class="grid">
     <div><label for="teacher">ชื่อผู้สอน</label><input type="text" id="teacher" name="teacher" placeholder="ชื่อ-นามสกุล"></div>
     <div><label>สอนวันที่</label>
@@ -31,8 +38,6 @@
       <input type="{{ typ }}" id="{{ key }}" name="{{ key }}" {% if typ=='number' %}min="1"{% endif %}
         placeholder="{% if key=='semester' %}เช่น 1 หรือ 2{% elif key=='year' %}เช่น {{ this_year }}{% elif key=='plan_no' %}เช่น 1{% elif key=='unit_no' %}เช่น 1{% endif %}"></div>
     {% endfor %}
-    <div class="full"><label for="note">หมายเหตุเพิ่มเติม</label>
-      <textarea id="note" name="note" placeholder="รายละเอียดหรือคำขอพิเศษ เช่น เน้นกิจกรรมกลุ่ม, ระบุชั้นเรียน ฯลฯ"></textarea></div>
   </div>
   <div class="flash" id="err" style="display:none;margin-top:18px"></div>
   <div class="actions"><button class="btn big" id="sb" type="submit">📤 ส่งข้อมูล</button></div>
@@ -54,10 +59,19 @@ document.querySelectorAll('.drop').forEach(drop=>{
   ['dragleave','drop'].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.remove('over')}));
   drop.addEventListener('drop',ev=>{if(ev.dataTransfer.files.length){inp.files=ev.dataTransfer.files;show()}});
 });
+const MIN_INSTR={{ min_instr }},ta=document.getElementById('instructions'),src=document.getElementById('source');
+function slowHint(){const ill=[...document.querySelectorAll('input[name=options]')].some(c=>c.checked&&c.value==='ทำภาพประกอบเพิ่ม');
+  document.getElementById('slow-hint').style.display=(!src.files.length||ill)?'':'none';
+  document.getElementById('instr-req').textContent=src.files.length?'(ไม่บังคับ ถ้าแนบไฟล์ข้อมูลแล้ว)':'(จำเป็น เพราะไม่ได้แนบไฟล์ข้อมูล: ระบุวิชา / ชั้น / เรื่อง)';
+  document.getElementById('instr-req').style.color=src.files.length?'':'var(--err)'}
+src.addEventListener('change',slowHint);document.querySelectorAll('input[name=options]').forEach(c=>c.addEventListener('change',slowHint));
+document.querySelector('.drop[data-for=source]').addEventListener('drop',()=>setTimeout(slowHint,0));slowHint();
+ta.addEventListener('input',()=>ta.classList.remove('bad'));
 document.getElementById('f').addEventListener('submit',e=>{
-  const miss=[];[['template','ไฟล์ที่ 1 (ฟอร์มแผนการสอนของโรงเรียน)'],['source','ไฟล์ที่ 2 (ไฟล์ข้อมูล)']].forEach(([id,n])=>{
-    const i=document.getElementById(id);if(!i.files.length){miss.push(n);i.closest('.drop').classList.add('bad')}});
-  const err=document.getElementById('err');
-  if(miss.length){e.preventDefault();err.textContent='กรุณาเลือก'+miss.join(' และ ');err.style.display='';err.scrollIntoView({behavior:'smooth',block:'center'});return}
+  const err=document.getElementById('err');const fail=m=>{e.preventDefault();err.textContent=m;err.style.display='';err.scrollIntoView({behavior:'smooth',block:'center'})};
+  const t=document.getElementById('template');
+  if(!t.files.length){t.closest('.drop').classList.add('bad');return fail('กรุณาเลือกไฟล์ที่ 1 (ฟอร์มแผนการสอนของโรงเรียน)')}
+  if(!src.files.length&&ta.value.trim().length<MIN_INSTR){ta.classList.add('bad');ta.focus();
+    return fail('⚠️ ไม่ได้แนบไฟล์ที่ 2 (ไฟล์ข้อมูล): กรุณาพิมพ์คำสั่งเพิ่มเติมถึงผู้จัดทำ โดยระบุอย่างน้อย วิชา / ชั้น / เรื่อง ที่ต้องการ (เช่น "ทำแผนที่ 1 เรื่อง เศษส่วน ป.4")')}
   err.style.display='none';const b=document.getElementById('sb');b.disabled=true;b.textContent='⏳ กำลังอัปโหลด...'});
 </script>{% endblock %}

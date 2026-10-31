@@ -54,6 +54,9 @@ LABELS = {"teacher": "ชื่อผู้สอน", "teach_day": "สอน�
 FIELD_KEYS = ["teacher", "teach_day", "teach_month", "teach_year", "plan_no", "unit_no", "semester", "year"]
 UPLOADS = [("template", "ไฟล์ที่ 1: ฟอร์มแผนการสอนของโรงเรียน (template)"),
            ("source", "ไฟล์ที่ 2: ไฟล์ข้อมูล (เช่น แผนจาก พว. หรือแหล่งอื่น ๆ)")]
+REQUIRED_UPLOADS = {"template"}
+OPTIONS = store.OPTIONS  # quick-option checkboxes (Thai labels, stored as-is in job['options'])
+MIN_INSTRUCTIONS = 10    # without a data file, instructions must describe subject/grade/topic
 STATUS_TH = {"awaiting_choice": "รอเลือกแผน", "queued": "รอคิว", "processing": "กำลังทำ", "done": "เสร็จแล้ว", "failed": "ผิดพลาด"}
 
 
@@ -81,15 +84,20 @@ def index():
     from datetime import datetime
     be = datetime.now(store.TZ).year + 543
     return render_template("index.html", fields=FIELDS, max_mb=MAX_MB, uploads=UPLOADS,
+                           required_uploads=REQUIRED_UPLOADS, options=OPTIONS, min_instr=MIN_INSTRUCTIONS,
                            months=THAI_MONTHS, years=list(range(be - 1, be + 3)), this_year=be)
 
 
 @app.post("/submit")
 def submit():
     ups = {}
+    instructions = (request.form.get("instructions") or request.form.get("note") or "").strip()
+    options = [o for o in OPTIONS if o in request.form.getlist("options")]
     for kind, label in UPLOADS:
         f = request.files.get(kind)
         if not f or not f.filename:
+            if kind not in REQUIRED_UPLOADS:
+                continue
             flash(f"กรุณาเลือก{label.split(':')[0]} ({label.split(': ', 1)[1]})")
             return redirect(url_for("index"))
         if os.path.splitext(f.filename)[1].lower() not in ALLOWED:
@@ -99,11 +107,15 @@ def submit():
     fields = {k: (request.form.get(k) or "").strip() for k in FIELD_KEYS}
     if fields["teach_month"] and fields["teach_month"] not in THAI_MONTHS:
         fields["teach_month"] = ""
-    note = (request.form.get("note") or "").strip()
-    job = store.create_job(ups, fields, note, plan_counter=detect_plans)
+    if "source" not in ups and len(instructions) < MIN_INSTRUCTIONS:
+        flash("ไม่ได้แนบไฟล์ที่ 2 (ไฟล์ข้อมูล): กรุณาพิมพ์คำสั่งเพิ่มเติมถึงผู้จัดทำ "
+              "โดยระบุอย่างน้อย วิชา / ชั้น / เรื่อง ที่ต้องการ (เช่น \"ทำแผนที่ 1 เรื่อง เศษส่วน ป.4\")")
+        return redirect(url_for("index"))
+    job = store.create_job(ups, fields, instructions, plan_counter=detect_plans,
+                           instructions=instructions, options=options)
     d = store.job_dir(job["id"])
     for kind in ("template", "source"):
-        if os.path.getsize(os.path.join(d, job["files"][kind])) > MAX_MB * 1024 * 1024:
+        if job["files"].get(kind) and os.path.getsize(os.path.join(d, job["files"][kind])) > MAX_MB * 1024 * 1024:
             shutil.rmtree(d)
             flash(f"ไฟล์ใหญ่เกินไป (สูงสุด {MAX_MB} MB ต่อไฟล์)")
             return redirect(url_for("index"))
@@ -170,7 +182,8 @@ def job_page(job_id):
     f = job["fields"]
     teach_date = " ".join(x for x in (f.get("teach_day"), f.get("teach_month"), f.get("teach_year")) if x)
     return render_template("job.html", job=job, labels=LABELS, teach_date=teach_date,
-                           plan_count=store.plan_count_of(job), plan_choice=plan_choice_text(job))
+                           plan_count=store.plan_count_of(job), plan_choice=plan_choice_text(job),
+                           instructions=store.instructions_of(job))
 
 
 @app.get("/api/job/<job_id>")
@@ -268,6 +281,10 @@ def worker_view(job):
     j["plan_selected"] = job.get("plan_selected")
     j["effective_plan_count"] = store.plan_count_of(job)
     j["plan_choice_th"] = plan_choice_text(job)
+    j["instructions"] = store.instructions_of(job)
+    j["options"] = job.get("options") or []
+    j["from_scratch"] = bool(job.get("from_scratch"))
+    j["eta_factor"] = store.eta_factor(job)
     j["urls"] = {k: url_for("worker_file", job_id=job["id"], kind=k, _external=True)
                  for k in WORKER_FILE_KINDS if job["files"].get(k)}
     j["urls"]["page"] = url_for("job_page", job_id=job["id"], _external=True)
@@ -323,8 +340,11 @@ def worker_requeue(job_id):
 def worker_file(job_id, kind):
     require_worker()
     j = load_or_404(job_id)
-    if kind not in WORKER_FILE_KINDS or not j["files"].get(kind):
-        abort(404)
+    if kind not in WORKER_FILE_KINDS:
+        return jsonify({"error": f"unknown file kind: {kind}"}), 404
+    if not j["files"].get(kind) or not os.path.isfile(os.path.join(store.job_dir(job_id), j["files"][kind])):
+        msg = "no source file (job is from_scratch: use instructions)" if kind == "source" else f"no {kind} file"
+        return jsonify({"error": msg, "kind": kind, "from_scratch": bool(j.get("from_scratch"))}), 404
     name = j["files"][kind]
     orig = j["files"].get(kind + "_original_name") or name
     return send_file(os.path.join(store.job_dir(job_id), name), as_attachment=True,

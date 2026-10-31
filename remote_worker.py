@@ -28,7 +28,7 @@ def die(msg, code=1):
     sys.exit(code)
 
 
-def request(method, path_or_url, data=None, headers=None, raw=False, retries=3):
+def request(method, path_or_url, data=None, headers=None, raw=False, retries=3, soft404=False):
     url = path_or_url if path_or_url.startswith("http") else BASE + path_or_url
     h = {"Authorization": f"Bearer {TOKEN}", "User-Agent": "lp-remote-worker/1"}
     h.update(headers or {})
@@ -39,6 +39,8 @@ def request(method, path_or_url, data=None, headers=None, raw=False, retries=3):
                 body = r.read()
                 return body if raw else json.loads(body.decode("utf-8"))
         except urllib.error.HTTPError as e:
+            if soft404 and e.code == 404:
+                return None
             if e.code in (502, 503, 504) and attempt < retries - 1:
                 time.sleep(10); continue
             die(f"HTTP {e.code} {method} {url}: {e.read().decode('utf-8', 'replace')[:500]}")
@@ -74,17 +76,34 @@ def download_inputs(job):
     local = {}
     for kind in ("template", "source"):
         url = job.get("urls", {}).get(kind)
-        if not url:
+        name = (job.get("files") or {}).get(kind)
+        if not url or not name:
+            continue  # e.g. from_scratch jobs have no source file
+        body = request("GET", url, raw=True, soft404=True)
+        if body is None:
+            print(f"warning: {kind} file not available on server, skipped", file=sys.stderr)
             continue
-        ext = os.path.splitext(job["files"][kind])[1]
-        dest = os.path.join(d, kind + ext)
+        dest = os.path.join(d, kind + os.path.splitext(name)[1])
         with open(dest, "wb") as f:
-            f.write(request("GET", url, raw=True))
+            f.write(body)
         local[kind] = dest
     with open(os.path.join(d, "job.json"), "w", encoding="utf-8") as f:
         json.dump(job, f, ensure_ascii=False, indent=2)
     return d, local
 
+
+
+def short_flags(j):
+    """Compact markers for list output: [ไม่มีไฟล์ข้อมูล] [ภาพ] [ใบงาน] [แก้คำ] [คำสั่ง: ...]"""
+    opts = j.get("options") or []
+    fl = []
+    if j.get("from_scratch"): fl.append("[ไม่มีไฟล์ข้อมูล]")
+    for full, short in (("ทำภาพประกอบเพิ่ม", "ภาพ"), ("ทำใบงาน/ใบความรู้แนบท้าย", "ใบงาน"),
+                        ("แก้คำผิดและเนื้อหาที่ผิด", "แก้คำ")):
+        if full in opts: fl.append(f"[{short}]")
+    ins = (j.get("instructions") or j.get("note") or "").replace("\n", " ").strip()
+    if ins: fl.append("[คำสั่ง: " + (ins[:40] + "…" if len(ins) > 40 else ins) + "]")
+    return " ".join(fl)
 
 def main(argv):
     if not argv or argv[0] in ("-h", "--help", "help"):
@@ -103,7 +122,7 @@ def main(argv):
             print(f'{j["id"]}  {j["status"]:<10}  {j["created_at"]}  จำนวนแผน={j.get("plan_count") or 1}  '
                   f'ทำ={("แผนที่ " + str(j.get("plan_selected"))) if j.get("plan_mode") == "one" else "ทั้งหมด"}  แผนที่={f.get("plan_no") or "-"}  '
                   f'ผู้สอน={f.get("teacher") or "-"}  ฟอร์ม={j["files"].get("template_original_name") or "-"}  '
-                  f'ข้อมูล={j["files"].get("source_original_name") or "-"}')
+                  f'ข้อมูล={j["files"].get("source_original_name") or "-"}  {short_flags(j)}'.rstrip())
         if not jobs:
             print("(ไม่มีงาน)")
         return 0
@@ -113,11 +132,14 @@ def main(argv):
         if not job:
             print("null"); return 1
         d, local = download_inputs(job)
-        pr({"id": job["id"], "status": job["status"], "fields": job["fields"], "note": job["note"],
+        pr({"id": job["id"], "status": job["status"], "fields": job["fields"], "note": job.get("note") or "",
             "plan_count": job.get("plan_count") or 1, "plan_numbers": job.get("plan_numbers") or [],
             "plan_mode": job.get("plan_mode") or "all", "plan_selected": job.get("plan_selected"),
             "effective_plan_count": job.get("effective_plan_count") or 1,
             "plan_choice_th": job.get("plan_choice_th") or "",
+            "from_scratch": bool(job.get("from_scratch")),
+            "instructions": job.get("instructions") or job.get("note") or "",
+            "options": job.get("options") or [], "eta_factor": job.get("eta_factor") or 1.0,
             "original_names": {"template": job["files"].get("template_original_name"),
                                "source": job["files"].get("source_original_name")},
             "local_dir": d, "local_paths": local}); return 0

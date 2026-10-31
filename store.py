@@ -10,6 +10,9 @@ TEMPLATE_DIR = os.path.join(DATA_DIR, "template")
 TEMPLATE_PATH = os.path.join(TEMPLATE_DIR, "main.docx")
 LOCK_PATH = os.path.join(DATA_DIR, ".lock")
 DEFAULT_MINUTES = 8.0
+OPTIONS = ["ทำภาพประกอบเพิ่ม", "ทำใบงาน/ใบความรู้แนบท้าย", "แก้คำผิดและเนื้อหาที่ผิด"]
+OPT_ILLUSTRATIONS = OPTIONS[0]
+SLOW_FACTOR = 1.5  # from-scratch jobs or extra illustrations take longer (applied once)
 TZ = timezone(timedelta(hours=7))
 
 DEFAULT_TEMPLATE_SRC = os.path.join(BASE, "default_template", "main.docx")
@@ -85,7 +88,18 @@ def plan_count_of(job):
         return 1
 
 
-def create_job(uploads, fields, note, plan_counter=None):
+def instructions_of(job):
+    return job.get("instructions") or job.get("note") or ""
+
+
+def eta_factor(job):
+    """1.5 when the job has no data file or asks for extra illustrations (not stacked), else 1."""
+    if job.get("from_scratch") or OPT_ILLUSTRATIONS in (job.get("options") or []):
+        return SLOW_FACTOR
+    return 1.0
+
+
+def create_job(uploads, fields, note, plan_counter=None, instructions=None, options=None):
     """uploads: {"template": (filename, save_fn), "source": (filename, save_fn)}.
     save_fn(dest_path) writes the uploaded file. If no template upload is given,
     the admin default template (data/template/main.docx) is copied as a fallback."""
@@ -115,7 +129,10 @@ def create_job(uploads, fields, note, plan_counter=None):
         "started_at": None,
         "finished_at": None,
         "fields": fields,
-        "note": note,
+        "note": note,               # legacy name, same text as instructions
+        "instructions": instructions if instructions is not None else note,
+        "options": list(options or []),
+        "from_scratch": not files["source"],
         "files": files,
         "plan_count": 1,          # plans detected in the source file
         "plan_numbers": [],       # detected plan numbers
@@ -244,7 +261,7 @@ def avg_minutes_per_plan(jobs=None):
         if j["status"] == "done" and j.get("started_at") and j.get("finished_at"):
             m = (parse_iso(j["finished_at"]) - parse_iso(j["started_at"])).total_seconds() / 60
             if m >= 1.0:  # ignore near-instant test completions (<1 min)
-                per_plan.append(m / plan_count_of(j))
+                per_plan.append(m / (plan_count_of(j) * eta_factor(j)))
     per_plan = per_plan[-20:]
     return sum(per_plan) / len(per_plan) if per_plan else DEFAULT_MINUTES
 
@@ -254,7 +271,7 @@ avg_minutes = avg_minutes_per_plan  # backwards-compatible name
 
 def remaining_minutes(job, avg, now=None):
     """Estimated minutes left for one job: plan_count x avg (minus elapsed if processing), min 1."""
-    total = plan_count_of(job) * avg
+    total = plan_count_of(job) * avg * eta_factor(job)
     if job["status"] == "processing" and job.get("started_at"):
         elapsed = ((now or datetime.now(TZ)) - parse_iso(job["started_at"])).total_seconds() / 60
         total -= elapsed
@@ -277,7 +294,9 @@ def status_info(job_id):
             "detected_plan_count": max(1, int(j.get("plan_count") or 1)),
             "plan_numbers": j.get("plan_numbers") or [],
             "plan_mode": j.get("plan_mode") or "all", "plan_selected": j.get("plan_selected"),
-            "job_minutes": round(pc * avg, 1),
+            "eta_factor": eta_factor(j), "from_scratch": bool(j.get("from_scratch")),
+            "instructions": instructions_of(j), "options": j.get("options") or [],
+            "job_minutes": round(pc * avg * eta_factor(j), 1),
             "has_docx": bool(j["files"]["result_docx"]),
             "has_pdf": bool(j["files"]["result_pdf"]),
             "queue_position": None, "jobs_ahead": None, "plans_ahead": None,

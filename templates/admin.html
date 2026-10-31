@@ -9,8 +9,10 @@
 <label>อัปโหลด/แทนที่แม่แบบสำรอง (.docx)</label><input type="file" name="template" accept=".docx" required>
 <div class="actions"><button class="btn">อัปโหลดแม่แบบ</button></div></form></div>
 <div class="card"><h3 style="margin-top:0">งานล่าสุด</h3>
-<div style="overflow-x:auto"><table><tr><th>รหัสงาน</th><th>สถานะ</th><th>ส่งเมื่อ</th><th>ผู้สอน</th><th>ฟอร์มโรงเรียน</th><th>แผนที่</th></tr>
+<div style="overflow-x:auto"><table><tr><th>รหัสงาน</th><th>สถานะ</th><th>ส่งเมื่อ</th><th>ผู้สอน</th><th>ฟอร์มโรงเรียน</th><th>แผนที่</th><th>ไฟล์ข้อมูล</th><th>คำสั่ง / ตัวเลือก</th></tr>
 {% for j in jobs %}<tr><td class="mono"><a href="/job/{{ j.id }}">{{ j.id }}</a></td><td><span class="badge b-{{ j.status }}">{{ status_th[j.status] }}</span></td>
-<td>{{ j.created_at[:16].replace('T',' ') }}</td><td>{{ j.fields.teacher or '-' }}</td><td>{{ j.files.template_original_name or '-' }}</td><td>{{ j.fields.plan_no or '-' }}</td></tr>
-{% else %}<tr><td colspan="6" class="hint">ยังไม่มีงาน</td></tr>{% endfor %}</table></div></div>
+<td>{{ j.created_at[:16].replace('T',' ') }}</td><td>{{ j.fields.teacher or '-' }}</td><td>{{ j.files.template_original_name or '-' }}</td><td>{{ j.fields.plan_no or '-' }}</td>
+<td>{% if j.files.source %}{{ j.files.source_original_name }}{% if (j.plan_count or 1) > 1 %} ({{ j.plan_count }} แผน{% if j.plan_mode == 'one' %}, ทำแผนที่ {{ j.plan_selected }}{% endif %}){% endif %}{% else %}<span class="badge b-awaiting_choice">ไม่มีไฟล์</span>{% endif %}</td>
+<td style="max-width:320px">{% set ins = j.instructions or j.note %}{% if ins %}<div style="white-space:pre-wrap">{{ ins[:200] }}{% if ins|length > 200 %}…{% endif %}</div>{% endif %}{% for o in j.options or [] %}<span class="tag">✔ {{ o }}</span> {% endfor %}{% if not ins and not j.options %}-{% endif %}</td></tr>
+{% else %}<tr><td colspan="8" class="hint">ยังไม่มีงาน</td></tr>{% endfor %}</table></div></div>
 {% endblock %}

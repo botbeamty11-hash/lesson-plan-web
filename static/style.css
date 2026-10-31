@@ -70,3 +70,8 @@ select:focus{outline:none;border-color:var(--pri);background:#fff;box-shadow:0 0
 .choice input[type=radio]{margin-right:8px}
 .choice select{margin-left:8px;padding:6px 10px;border-radius:8px;font:inherit}
 .plans-found{font-weight:700;color:var(--pri)}
+.big-ta{width:100%;min-height:150px;font:inherit;font-size:1rem;padding:12px 14px;border:1px solid var(--bd);border-radius:10px;box-sizing:border-box;resize:vertical}
+.big-ta.bad{border-color:var(--err);box-shadow:0 0 0 3px #fecaca}
+.opts{display:flex;flex-wrap:wrap;gap:10px 22px;margin:12px 0 6px}
+.chk{display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-weight:500}
+.tag{display:inline-block;background:#eff6ff;color:#1e3a8a;border-radius:999px;padding:2px 10px;font-size:.88rem;margin:2px 0}
