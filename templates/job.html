@@ -6,6 +6,7 @@
   <h1 id="headline">กำลังรอคิว...</h1>
   <p class="sub" id="subline">กรุณาเปิดหน้านี้ไว้ ระบบจะอัปเดตสถานะอัตโนมัติ</p>
   <span class="badge b-queued" id="badge">รอคิว</span>
+  <p class="plans-found" id="plans"{% if plan_count <= 1 and not plan_choice %} style="display:none"{% endif %}>{% if job.get('plan_count', 1) > 1 %}พบ {{ job.plan_count }} แผนในไฟล์ข้อมูล{% endif %}{% if plan_choice %} · {{ plan_choice }}{% endif %}</p>
   <div class="steps">
     <div class="step" data-s="queued"><div class="dot">1</div>รอคิว</div>
     <div class="step" data-s="processing"><div class="dot">2</div>กำลังทำ</div>
@@ -26,6 +27,8 @@
     <dt>รหัสงาน</dt><dd class="mono">{{ job.id }}</dd>
     <dt>ไฟล์ที่ 1 (ฟอร์มโรงเรียน)</dt><dd>{{ job.files.template_original_name or '-' }}</dd>
     <dt>ไฟล์ที่ 2 (ไฟล์ข้อมูล)</dt><dd>{{ job.files.source_original_name }}</dd>
+    <dt>จำนวนแผนในไฟล์ข้อมูล</dt><dd>{{ job.get('plan_count') or 1 }} แผน{% if job.get('plan_numbers') and job.plan_numbers|length > 1 %} (แผนที่ {{ job.plan_numbers|join(', ') }}){% endif %}</dd>
+    {% if plan_choice %}<dt>แผนที่จะจัดทำ</dt><dd>{{ plan_choice }}</dd>{% endif %}
     {% if teach_date %}<dt>สอนวันที่</dt><dd>{{ teach_date }}</dd>{% endif %}
     {% for k, v in job.fields.items() %}{% if v and not k.startswith('teach_') %}<dt>{{ labels.get(k, k) }}</dt><dd>{{ v }}</dd>{% endif %}{% endfor %}
     {% if job.note %}<dt>หมายเหตุ</dt><dd style="white-space:pre-wrap">{{ job.note }}</dd>{% endif %}
@@ -45,6 +48,9 @@ function render(d){
     $('pos').textContent=s==='queued'?d.queue_position:'กำลังทำ';
     $('ahead').textContent=d.jobs_ahead+' งาน';
     $('eta').textContent='~'+d.eta_minutes+' นาที';
+    const pl=[];if(d.detected_plan_count>1)pl.push('พบ '+d.detected_plan_count+' แผนในไฟล์ข้อมูล');if(d.plan_choice_th)pl.push(d.plan_choice_th);
+    pl.push('ประมาณ '+Math.max(1,Math.round(d.job_minutes))+' นาทีสำหรับงานนี้ ('+d.plan_count+' แผน × '+d.avg_minutes_per_plan+' นาที)');
+    $('plans').textContent=pl.join(' · ');$('plans').style.display='';
     $('stats').style.display='';
   } else {
     $('stats').style.display='none';
@@ -60,7 +66,7 @@ function render(d){
       $('dl').innerHTML='<a class="btn" href="/">ส่งงานใหม่</a>';$('dl').style.display='flex';
     }
   }
-  $('upd').textContent='อัปเดตล่าสุด '+new Date().toLocaleTimeString('th-TH')+(d.status==='queued'||d.status==='processing'?' · เวลาเฉลี่ยต่องาน '+d.avg_minutes+' นาที':'');
+  $('upd').textContent='อัปเดตล่าสุด '+new Date().toLocaleTimeString('th-TH')+(d.status==='queued'||d.status==='processing'?' · เวลาเฉลี่ยต่อแผน '+d.avg_minutes_per_plan+' นาที':'');
   return s==='done'||s==='failed';
 }
 async function poll(){try{const r=await fetch('/api/job/'+ID,{cache:'no-store'});if(r.ok){if(render(await r.json()))return}}catch(e){}

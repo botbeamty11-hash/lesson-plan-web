@@ -74,7 +74,18 @@ def new_job_id():
     return datetime.now(TZ).strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:6]
 
 
-def create_job(uploads, fields, note):
+def plan_count_of(job):
+    """Effective number of plans to produce, used for ETA (old jobs lack it -> 1)."""
+    try:
+        v = job.get("effective_plan_count")
+        if v is None:
+            v = 1 if job.get("plan_mode") == "one" else job.get("plan_count")
+        return max(1, int(v or 1))
+    except (TypeError, ValueError):
+        return 1
+
+
+def create_job(uploads, fields, note, plan_counter=None):
     """uploads: {"template": (filename, save_fn), "source": (filename, save_fn)}.
     save_fn(dest_path) writes the uploaded file. If no template upload is given,
     the admin default template (data/template/main.docx) is copied as a fallback."""
@@ -106,11 +117,44 @@ def create_job(uploads, fields, note):
         "fields": fields,
         "note": note,
         "files": files,
+        "plan_count": 1,          # plans detected in the source file
+        "plan_numbers": [],       # detected plan numbers
+        "plan_mode": "all",       # 'all' | 'one'
+        "plan_selected": None,    # plan number when plan_mode == 'one'
+        "effective_plan_count": 1,  # plans actually produced (ETA)
         "error": None,
     }
+    if plan_counter and files["source"]:
+        try:
+            cnt, nums = plan_counter(os.path.join(d, files["source"]))
+            job["plan_count"], job["plan_numbers"] = max(1, int(cnt)), list(nums)
+        except Exception:
+            job["plan_count"], job["plan_numbers"] = 1, []
+    job["effective_plan_count"] = job["plan_count"]
+    if job["plan_count"] > 1:
+        job["status"] = "awaiting_choice"  # submitter must choose one plan vs all before queuing
     with lock():
         save(job)
     return job
+
+
+def set_plan_choice(job_id, mode, selected=None):
+    """Record the submitter's choice and put the job in the queue."""
+    with lock():
+        j = load(job_id)
+        if not j:
+            raise KeyError(job_id)
+        if j["status"] != "awaiting_choice":
+            return j
+        if mode == "one":
+            j["plan_mode"], j["plan_selected"], j["effective_plan_count"] = "one", selected, 1
+        else:
+            j["plan_mode"], j["plan_selected"] = "all", None
+            j["effective_plan_count"] = max(1, int(j.get("plan_count") or 1))
+        j["status"] = "queued"
+        j["queued_at"] = now_iso()
+        save(j)
+        return j
 
 
 def with_paths(job):
@@ -192,16 +236,29 @@ def requeue(job_id):
         return j
 
 
-def avg_minutes(jobs=None):
+def avg_minutes_per_plan(jobs=None):
+    """Average minutes per lesson plan over the last 20 completed jobs (>=1 min each)."""
     jobs = jobs if jobs is not None else all_jobs()
-    durs = []
+    per_plan = []
     for j in jobs:
         if j["status"] == "done" and j.get("started_at") and j.get("finished_at"):
             m = (parse_iso(j["finished_at"]) - parse_iso(j["started_at"])).total_seconds() / 60
             if m >= 1.0:  # ignore near-instant test completions (<1 min)
-                durs.append(m)
-    durs = durs[-20:]
-    return sum(durs) / len(durs) if durs else DEFAULT_MINUTES
+                per_plan.append(m / plan_count_of(j))
+    per_plan = per_plan[-20:]
+    return sum(per_plan) / len(per_plan) if per_plan else DEFAULT_MINUTES
+
+
+avg_minutes = avg_minutes_per_plan  # backwards-compatible name
+
+
+def remaining_minutes(job, avg, now=None):
+    """Estimated minutes left for one job: plan_count x avg (minus elapsed if processing), min 1."""
+    total = plan_count_of(job) * avg
+    if job["status"] == "processing" and job.get("started_at"):
+        elapsed = ((now or datetime.now(TZ)) - parse_iso(job["started_at"])).total_seconds() / 60
+        total -= elapsed
+    return max(1.0, total)
 
 
 def status_info(job_id):
@@ -209,24 +266,35 @@ def status_info(job_id):
     j = next((x for x in jobs if x["id"] == job_id), None)
     if not j:
         return None
-    avg = avg_minutes(jobs)
+    avg = avg_minutes_per_plan(jobs)
+    now = datetime.now(TZ)
+    pc = plan_count_of(j)
     info = {"id": j["id"], "status": j["status"], "created_at": j["created_at"],
             "started_at": j["started_at"], "finished_at": j["finished_at"],
-            "error": j["error"], "avg_minutes": round(avg, 1),
+            "error": j["error"], "avg_minutes_per_plan": round(avg, 1),
+            "avg_minutes": round(avg, 1),  # kept for older clients (now per plan)
+            "plan_count": pc,  # effective plans used for ETA
+            "detected_plan_count": max(1, int(j.get("plan_count") or 1)),
+            "plan_numbers": j.get("plan_numbers") or [],
+            "plan_mode": j.get("plan_mode") or "all", "plan_selected": j.get("plan_selected"),
+            "job_minutes": round(pc * avg, 1),
             "has_docx": bool(j["files"]["result_docx"]),
             "has_pdf": bool(j["files"]["result_pdf"]),
-            "queue_position": None, "jobs_ahead": None, "eta_minutes": None}
+            "queue_position": None, "jobs_ahead": None, "plans_ahead": None,
+            "eta_minutes": None}
     processing = [x for x in jobs if x["status"] == "processing"]
     if j["status"] == "queued":
         queued = [x for x in jobs if x["status"] == "queued"]
         idx = [x["id"] for x in queued].index(j["id"])
-        ahead = idx + len(processing)
+        ahead = processing + queued[:idx]
         info["queue_position"] = idx + 1
-        info["jobs_ahead"] = ahead
-        info["eta_minutes"] = max(1, round((ahead + 1) * avg))
+        info["jobs_ahead"] = len(ahead)
+        info["plans_ahead"] = sum(plan_count_of(x) for x in ahead)
+        mins = sum(remaining_minutes(x, avg, now) for x in ahead) + remaining_minutes(j, avg, now)
+        info["eta_minutes"] = max(1, round(mins))
     elif j["status"] == "processing":
-        elapsed = (datetime.now(TZ) - parse_iso(j["started_at"])).total_seconds() / 60
         info["queue_position"] = 0
         info["jobs_ahead"] = 0
-        info["eta_minutes"] = max(1, round(avg - elapsed))
+        info["plans_ahead"] = 0
+        info["eta_minutes"] = max(1, round(remaining_minutes(j, avg, now)))
     return info

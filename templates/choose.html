@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}เลือกแผนที่ต้องการ {{ job.id }}{% endblock %}
+{% block content %}
+<form class="card" method="post" action="/job/{{ job.id }}/choose" id="cf">
+  <h1>📑 พบ {{ n }} แผนในไฟล์ข้อมูล</h1>
+  <p class="sub">ต้องการทำแผนเดียว หรือทำทั้ง {{ n }} แผน{% if nums %} (พบแผนที่ {{ nums|join(', ') }}){% endif %}</p>
+  <label class="choice"><input type="radio" name="plan_mode" value="all" checked>
+    <b>ทำทั้ง {{ n }} แผน</b> — รวมเป็นไฟล์ Word เดียว
+    <span class="hint">(ใช้เวลาประมาณ {{ (n * avg)|round|int }} นาที ไม่รวมคิว)</span></label>
+  <label class="choice"><input type="radio" name="plan_mode" value="one">
+    <b>ทำแผนเดียว</b> — เลือกแผนที่
+    <select name="plan_selected" id="sel" aria-label="เลือกเลขแผน">
+      {% for x in nums %}<option value="{{ x }}">แผนการจัดการเรียนรู้ที่ {{ x }}</option>{% endfor %}
+    </select>
+    <span class="hint">(ใช้เวลาประมาณ {{ avg|round|int if avg >= 1 else 1 }} นาที ไม่รวมคิว)</span></label>
+  <p class="hint">งานจะเข้าคิวหลังจากกดยืนยันเท่านั้น</p>
+  <div class="actions"><button class="btn big" type="submit">✅ ยืนยันและส่งเข้าคิว</button></div>
+</form>
+{% endblock %}
+{% block scripts %}<script>
+document.getElementById('sel').addEventListener('change',()=>{document.querySelector('input[value=one]').checked=true});
+</script>{% endblock %}

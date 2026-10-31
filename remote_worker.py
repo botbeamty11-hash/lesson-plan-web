@@ -100,7 +100,8 @@ def main(argv):
             jobs = [j for j in jobs if j["status"] in ("queued", "processing")]
         for j in jobs:
             f = j["fields"]
-            print(f'{j["id"]}  {j["status"]:<10}  {j["created_at"]}  แผนที่={f.get("plan_no") or "-"}  '
+            print(f'{j["id"]}  {j["status"]:<10}  {j["created_at"]}  จำนวนแผน={j.get("plan_count") or 1}  '
+                  f'ทำ={("แผนที่ " + str(j.get("plan_selected"))) if j.get("plan_mode") == "one" else "ทั้งหมด"}  แผนที่={f.get("plan_no") or "-"}  '
                   f'ผู้สอน={f.get("teacher") or "-"}  ฟอร์ม={j["files"].get("template_original_name") or "-"}  '
                   f'ข้อมูล={j["files"].get("source_original_name") or "-"}')
         if not jobs:
@@ -113,6 +114,10 @@ def main(argv):
             print("null"); return 1
         d, local = download_inputs(job)
         pr({"id": job["id"], "status": job["status"], "fields": job["fields"], "note": job["note"],
+            "plan_count": job.get("plan_count") or 1, "plan_numbers": job.get("plan_numbers") or [],
+            "plan_mode": job.get("plan_mode") or "all", "plan_selected": job.get("plan_selected"),
+            "effective_plan_count": job.get("effective_plan_count") or 1,
+            "plan_choice_th": job.get("plan_choice_th") or "",
             "original_names": {"template": job["files"].get("template_original_name"),
                                "source": job["files"].get("source_original_name")},
             "local_dir": d, "local_paths": local}); return 0

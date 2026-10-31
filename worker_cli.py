@@ -27,7 +27,7 @@ def main(argv):
             jobs = [j for j in jobs if j["status"] in ("queued", "processing")]
         for j in jobs:
             f = j["fields"]
-            print(f'{j["id"]}  {j["status"]:<10}  {j["created_at"]}  แผนที่={f.get("plan_no") or "-"}  ผู้สอน={f.get("teacher") or "-"}  ฟอร์ม={j["files"].get("template_original_name") or "-"}  ข้อมูล={j["files"]["source_original_name"]}')
+            print(f'{j["id"]}  {j["status"]:<10}  {j["created_at"]}  จำนวนแผน={j.get("plan_count") or 1}  ทำ={("แผนที่ " + str(j.get("plan_selected"))) if j.get("plan_mode") == "one" else "ทั้งหมด"}  แผนที่={f.get("plan_no") or "-"}  ผู้สอน={f.get("teacher") or "-"}  ฟอร์ม={j["files"].get("template_original_name") or "-"}  ข้อมูล={j["files"]["source_original_name"]}')
         if not jobs:
             print("(ไม่มีงาน)")
         return 0

@@ -11,6 +11,7 @@ from flask import (Flask, abort, jsonify, redirect, render_template, request,
                    send_file, session, url_for, flash)
 from werkzeug.middleware.proxy_fix import ProxyFix
 import store
+from plancount import detect_plans
 
 ALLOWED = {".doc", ".docx", ".pdf"}
 MAX_MB = 20
@@ -53,7 +54,7 @@ LABELS = {"teacher": "ชื่อผู้สอน", "teach_day": "สอน�
 FIELD_KEYS = ["teacher", "teach_day", "teach_month", "teach_year", "plan_no", "unit_no", "semester", "year"]
 UPLOADS = [("template", "ไฟล์ที่ 1: ฟอร์มแผนการสอนของโรงเรียน (template)"),
            ("source", "ไฟล์ที่ 2: ไฟล์ข้อมูล (เช่น แผนจาก พว. หรือแหล่งอื่น ๆ)")]
-STATUS_TH = {"queued": "รอคิว", "processing": "กำลังทำ", "done": "เสร็จแล้ว", "failed": "ผิดพลาด"}
+STATUS_TH = {"awaiting_choice": "รอเลือกแผน", "queued": "รอคิว", "processing": "กำลังทำ", "done": "เสร็จแล้ว", "failed": "ผิดพลาด"}
 
 
 def fire_webhook(job_id):
@@ -99,15 +100,61 @@ def submit():
     if fields["teach_month"] and fields["teach_month"] not in THAI_MONTHS:
         fields["teach_month"] = ""
     note = (request.form.get("note") or "").strip()
-    job = store.create_job(ups, fields, note)
+    job = store.create_job(ups, fields, note, plan_counter=detect_plans)
     d = store.job_dir(job["id"])
     for kind in ("template", "source"):
         if os.path.getsize(os.path.join(d, job["files"][kind])) > MAX_MB * 1024 * 1024:
             shutil.rmtree(d)
             flash(f"ไฟล์ใหญ่เกินไป (สูงสุด {MAX_MB} MB ต่อไฟล์)")
             return redirect(url_for("index"))
+    if job["status"] == "awaiting_choice":
+        return redirect(url_for("choose_plan", job_id=job["id"]))
     fire_webhook(job["id"])
     return redirect(url_for("job_page", job_id=job["id"]))
+
+
+def plan_choice_text(job):
+    """Thai description of which plan(s) will be produced."""
+    n = max(1, int(job.get("plan_count") or 1))
+    if job.get("plan_mode") == "one" and job.get("plan_selected") is not None:
+        return f"ทำแผนเดียว: แผนการจัดการเรียนรู้ที่ {job['plan_selected']} (จากทั้งหมด {n} แผนในไฟล์)"
+    if n > 1:
+        return f"ทำทั้ง {n} แผน (รวมเป็นไฟล์เดียว)"
+    return ""
+
+
+@app.route("/job/<job_id>/choose", methods=["GET", "POST"])
+def choose_plan(job_id):
+    try:
+        job = store.load(job_id)
+    except ValueError:
+        abort(404)
+    if not job:
+        abort(404)
+    if job["status"] != "awaiting_choice":
+        return redirect(url_for("job_page", job_id=job_id))
+    nums = job.get("plan_numbers") or []
+    if request.method == "POST":
+        mode = request.form.get("plan_mode")
+        if mode == "one":
+            try:
+                sel = int(request.form.get("plan_selected") or "")
+            except ValueError:
+                sel = None
+            if sel is None or (nums and sel not in nums):
+                flash("กรุณาเลือกเลขแผนที่ต้องการ")
+                return redirect(url_for("choose_plan", job_id=job_id))
+            store.set_plan_choice(job_id, "one", sel)
+        elif mode == "all":
+            store.set_plan_choice(job_id, "all")
+        else:
+            flash("กรุณาเลือกว่าจะทำแผนเดียวหรือทำทั้งหมด")
+            return redirect(url_for("choose_plan", job_id=job_id))
+        fire_webhook(job_id)
+        return redirect(url_for("job_page", job_id=job_id))
+    avg = store.avg_minutes_per_plan()
+    return render_template("choose.html", job=job, n=job.get("plan_count") or 1, nums=nums,
+                           avg=round(avg, 1))
 
 
 @app.get("/job/<job_id>")
@@ -118,9 +165,12 @@ def job_page(job_id):
         abort(404)
     if not job:
         abort(404)
+    if job["status"] == "awaiting_choice":
+        return redirect(url_for("choose_plan", job_id=job_id))
     f = job["fields"]
     teach_date = " ".join(x for x in (f.get("teach_day"), f.get("teach_month"), f.get("teach_year")) if x)
-    return render_template("job.html", job=job, labels=LABELS, teach_date=teach_date)
+    return render_template("job.html", job=job, labels=LABELS, teach_date=teach_date,
+                           plan_count=store.plan_count_of(job), plan_choice=plan_choice_text(job))
 
 
 @app.get("/api/job/<job_id>")
@@ -132,6 +182,7 @@ def job_status(job_id):
     if not info:
         return jsonify({"error": "not found"}), 404
     info["status_th"] = STATUS_TH.get(info["status"], info["status"])
+    info["plan_choice_th"] = plan_choice_text(store.load(job_id) or {})
     return jsonify(info)
 
 
@@ -211,6 +262,12 @@ WORKER_FILE_KINDS = ("template", "source", "result_docx", "result_pdf")
 def worker_view(job):
     """Job JSON + local paths + token-protected download URLs for remote workers."""
     j = store.with_paths(job)
+    j["plan_count"] = max(1, int(job.get("plan_count") or 1))  # detected in source file
+    j["plan_numbers"] = job.get("plan_numbers") or []
+    j["plan_mode"] = job.get("plan_mode") or "all"
+    j["plan_selected"] = job.get("plan_selected")
+    j["effective_plan_count"] = store.plan_count_of(job)
+    j["plan_choice_th"] = plan_choice_text(job)
     j["urls"] = {k: url_for("worker_file", job_id=job["id"], kind=k, _external=True)
                  for k in WORKER_FILE_KINDS if job["files"].get(k)}
     j["urls"]["page"] = url_for("job_page", job_id=job["id"], _external=True)

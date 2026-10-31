@@ -65,3 +65,8 @@ select{width:100%;padding:11px 10px;border:1px solid var(--bd);border-radius:10p
 select:focus{outline:none;border-color:var(--pri);background:#fff;box-shadow:0 0 0 3px rgba(37,99,235,.15)}
 .note{background:#eff6ff;border:1px solid #bfdbfe;color:#1e3a8a;border-radius:10px;padding:12px 16px;margin-bottom:16px;font-size:.95rem;line-height:1.6}
 .flash.warn{background:#fffbeb;color:#92400e;border-color:#fde68a}
+.b-awaiting_choice{background:#ede9fe;color:#5b21b6}
+.choice{display:block;border:1px solid var(--bd);border-radius:12px;padding:14px 16px;margin:10px 0;cursor:pointer;text-align:left}
+.choice input[type=radio]{margin-right:8px}
+.choice select{margin-left:8px;padding:6px 10px;border-radius:8px;font:inherit}
+.plans-found{font-weight:700;color:var(--pri)}
