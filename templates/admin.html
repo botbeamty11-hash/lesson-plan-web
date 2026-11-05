@@ -9,6 +9,73 @@
 <label>อัปโหลด/แทนที่แม่แบบสำรอง (.docx)</label><input type="file" name="template" accept=".docx" required>
 <div class="actions"><button class="btn">อัปโหลดแม่แบบ</button></div></form></div>
 
+<div class="card" id="board">
+  <h3 style="margin-top:0">📊 บอร์ดยอดเติม</h3>
+  {% set s = board.stats %}
+  <div class="board-stats">
+    <div class="stat"><div class="v">{{ '{:,.0f}'.format(s.today.amount) }}฿</div><div class="k">วันนี้ ({{ s.today.count }} รายการ)</div></div>
+    <div class="stat"><div class="v">{{ '{:,.0f}'.format(s.week.amount) }}฿</div><div class="k">7 วันล่าสุด ({{ s.week.count }} รายการ)</div></div>
+    <div class="stat"><div class="v">{{ '{:,.0f}'.format(s.month.amount) }}฿</div><div class="k">เดือนนี้ ({{ s.month.count }} รายการ)</div></div>
+    <div class="stat"><div class="v">{{ '{:,.0f}'.format(s.all.amount) }}฿</div><div class="k">ทั้งหมด ({{ s.all.count }} รายการ)</div></div>
+    <div class="stat st-review"><div class="v">{{ board.review }}</div><div class="k">สลิปรอตรวจ</div></div>
+    <div class="stat st-rejected"><div class="v">{{ board.rejected }}</div><div class="k">สลิปถูกปฏิเสธ</div></div>
+  </div>
+  <p class="hint">นับเฉพาะยอดที่อนุมัติแล้ว (ตามวันที่อนุมัติ เวลาไทย)</p>
+  {% set fl = {'all':'ทั้งหมด','review':'รอตรวจ','approved':'อนุมัติแล้ว','rejected':'ถูกปฏิเสธ'} %}
+  <div class="board-filter">
+    {% for k, label in fl.items() %}
+    <a href="/admin?board={{ k }}#board" class="{{ 'on' if board.filter == k }}">{{ label }}</a>
+    {% endfor %}
+    <span class="hint">· {{ board.total }} สลิป</span>
+  </div>
+  <div class="slip-grid">
+    {% for it in board.slips %}{% set j = it.job %}{% set p = it.pay %}
+    <div class="slip-card">
+      {% if it.is_pdf %}
+      <a href="/job/{{ j.id }}/slip" target="_blank" class="slip-pdf">📄 เปิดสลิป (PDF)</a>
+      {% else %}
+      <a href="/job/{{ j.id }}/slip" target="_blank" class="slip-big-link" title="คลิกเพื่อขยาย"><img src="/job/{{ j.id }}/slip" alt="สลิป {{ j.id }}" class="slip-big" loading="lazy"></a>
+      {% endif %}
+      <div class="slip-info">
+        {% if it.state == 'approved' %}<span class="sbadge sb-ok">✅ อนุมัติแล้ว</span>
+        {% elif it.state == 'review' %}<span class="sbadge sb-wait">⏳ รอตรวจ</span>
+        {% elif it.state == 'rejected' %}<span class="sbadge sb-err">❌ ถูกปฏิเสธ</span>
+        {% else %}<span class="sbadge">{{ status_th.get(j.status, j.status) }}</span>{% endif %}
+        {% if it.state == 'rejected' and p.reject_reason %}<div class="slip-reason">เหตุผล: {{ p.reject_reason }}</div>{% endif %}
+        <div class="slip-amt">ยอดที่ต้องชำระ <b>{{ p.amount_due or '-' }}฿</b>
+          {% if p.amount_on_slip %}<br>ยอดบนสลิป <b>{{ p.amount_on_slip }}฿</b>{% endif %}</div>
+        <div>👩‍🏫 {{ j.fields.teacher or '-' }} · {{ p.plan_count_billed or j.effective_plan_count or 1 }} แผน</div>
+        <div class="mono small"><a href="/job/{{ j.id }}">{{ j.id }}</a></div>
+        <div class="hint">อัปโหลด {{ it.uploaded_disp }}</div>
+        {% if p.duplicate_ref_flag %}<div class="slip-reason">⚠ ref ซ้ำ</div>{% endif %}
+        {% if it.state == 'review' %}
+        <div class="slip-actions">
+          <form method="post">
+            <input type="hidden" name="action" value="pay_approve"><input type="hidden" name="job_id" value="{{ j.id }}">
+            <input type="hidden" name="from_board" value="1"><input type="hidden" name="board" value="{{ board.filter }}"><input type="hidden" name="board_page" value="{{ board.page }}">
+            <button class="btn sm">✅ อนุมัติ</button>
+          </form>
+          <form method="post" onsubmit="var r=prompt('เหตุผลที่ปฏิเสธ','สลิปไม่ถูกต้อง');if(r===null)return false;this.reason.value=r;return true;">
+            <input type="hidden" name="action" value="pay_reject"><input type="hidden" name="job_id" value="{{ j.id }}">
+            <input type="hidden" name="reason" value="สลิปไม่ถูกต้อง">
+            <input type="hidden" name="from_board" value="1"><input type="hidden" name="board" value="{{ board.filter }}"><input type="hidden" name="board_page" value="{{ board.page }}">
+            <button class="btn sec sm">❌ ปฏิเสธ</button>
+          </form>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+    {% else %}<p class="hint">ยังไม่มีสลิปในหมวดนี้</p>{% endfor %}
+  </div>
+  {% if board.pages > 1 %}
+  <div class="board-pager">
+    {% if board.page > 1 %}<a class="btn sec sm" href="/admin?board={{ board.filter }}&board_page={{ board.page - 1 }}#board">‹ ก่อนหน้า</a>{% endif %}
+    <span class="hint">หน้า {{ board.page }} / {{ board.pages }}</span>
+    {% if board.page < board.pages %}<a class="btn sm" href="/admin?board={{ board.filter }}&board_page={{ board.page + 1 }}#board">แสดงเพิ่ม ›</a>{% endif %}
+  </div>
+  {% endif %}
+</div>
+
 <div class="card" id="settings">
   <h3 style="margin-top:0">⚙️ ตั้งค่า PromptPay / ราคา</h3>
   <div class="stats" style="margin-top:0">

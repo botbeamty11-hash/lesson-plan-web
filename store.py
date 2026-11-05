@@ -690,3 +690,79 @@ def status_info(job_id):
         info["plans_ahead"] = 0
         info["eta_minutes"] = max(1, round(remaining_minutes(j, avg, now)))
     return info
+
+
+BOARD_FILTERS = ("all", "review", "approved", "rejected")
+
+
+def _board_state(j):
+    st = j["status"]
+    if st == "payment_rejected":
+        return "rejected"
+    if st == "payment_review":
+        return "review"
+    if st == "awaiting_payment":
+        return "awaiting"
+    if (j.get("payment") or {}).get("verified_at"):
+        return "approved"
+    return "other"
+
+
+def topup_board(filt="all", page=1, per_page=24):
+    """Stats + slip gallery for the admin top-up board (Asia/Bangkok dates)."""
+    now = datetime.now(TZ)
+    today = now.date()
+    week_start = today - timedelta(days=6)
+    stats = {k: {"amount": 0.0, "count": 0} for k in ("today", "week", "month", "all")}
+    review = rejected = 0
+    slips = []
+    for j in all_jobs():
+        pay = j.get("payment") or {}
+        state = _board_state(j)
+        if state == "review":
+            review += 1
+        elif state == "rejected":
+            rejected += 1
+        elif state == "approved":
+            try:
+                amt = float(pay.get("amount_due") or 0)
+            except (TypeError, ValueError):
+                amt = 0.0
+            try:
+                vd = parse_iso(pay["verified_at"]).astimezone(TZ).date()
+            except Exception:
+                vd = None
+            buckets = ["all"]
+            if vd:
+                if vd == today:
+                    buckets.append("today")
+                if week_start <= vd <= today:
+                    buckets.append("week")
+                if (vd.year, vd.month) == (today.year, today.month):
+                    buckets.append("month")
+            for b in buckets:
+                stats[b]["amount"] += amt
+                stats[b]["count"] += 1
+        slip = pay.get("slip_file") or (j.get("files") or {}).get("slip")
+        if slip and os.path.isfile(os.path.join(job_dir(j["id"]), slip)):
+            up = pay.get("slip_uploaded_at") or j.get("created_at") or ""
+            try:
+                up_disp = parse_iso(up).astimezone(TZ).strftime("%d/%m/%Y %H:%M")
+            except Exception:
+                up_disp = up[:16].replace("T", " ")
+            slips.append({"job": j, "pay": pay, "state": state,
+                          "uploaded_at": up, "uploaded_disp": up_disp,
+                          "is_pdf": slip.lower().endswith(".pdf")})
+    for v in stats.values():
+        v["amount"] = round(v["amount"], 2)
+    slips.sort(key=lambda s: s["uploaded_at"], reverse=True)
+    if filt not in BOARD_FILTERS:
+        filt = "all"
+    if filt != "all":
+        slips = [s for s in slips if s["state"] == filt]
+    total = len(slips)
+    pages = max(1, (total + per_page - 1) // per_page)
+    page = min(max(1, page), pages)
+    return {"stats": stats, "review": review, "rejected": rejected,
+            "slips": slips[(page - 1) * per_page: page * per_page],
+            "filter": filt, "page": page, "pages": pages, "total": total}

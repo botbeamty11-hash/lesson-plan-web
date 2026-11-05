@@ -91,3 +91,25 @@ select:focus{outline:none;border-color:var(--pri);background:#fff;box-shadow:0 0
 .slip-thumb{width:56px;height:56px;object-fit:cover;border-radius:8px;border:1px solid var(--bd)}
 .pay-card .slip-form{margin-top:8px}
 main.main-wide{max-width:1100px}
+/* top-up board */
+.board-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:10px 0}
+@media(max-width:640px){.board-stats{grid-template-columns:1fr 1fr}}
+.st-review .v{color:var(--warn)}.st-rejected .v{color:var(--err)}
+.board-filter{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:14px 0}
+.board-filter a{padding:6px 14px;border:1px solid var(--bd);border-radius:999px;text-decoration:none;color:var(--txt);font-size:.9rem}
+.board-filter a.on{background:var(--pri);border-color:var(--pri);color:#fff}
+.slip-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px}
+.slip-card{border:1px solid var(--bd);border-radius:12px;overflow:hidden;background:#f8fafc;display:flex;flex-direction:column}
+.slip-big-link{display:block;background:#e2e8f0}
+.slip-big{display:block;width:100%;height:300px;object-fit:contain;cursor:zoom-in}
+.slip-pdf{display:grid;place-items:center;height:120px;text-decoration:none}
+.slip-info{padding:10px 12px;font-size:.9rem;display:flex;flex-direction:column;gap:4px}
+.slip-amt b{color:var(--pri)}
+.sbadge{align-self:flex-start;padding:3px 10px;border-radius:999px;font-weight:700;font-size:.82rem;background:#e2e8f0}
+.sb-ok{background:#dcfce7;color:#166534}.sb-wait{background:#fef3c7;color:#92400e}.sb-err{background:#fee2e2;color:#991b1b}
+.slip-reason{color:var(--err);font-size:.85rem}
+.slip-actions{display:flex;gap:8px;margin-top:6px}.slip-actions form{flex:1}.slip-actions .btn{width:100%;justify-content:center}
+.btn.sm{padding:6px 12px;font-size:.85rem}
+.small{font-size:.8rem;word-break:break-all}
+.board-pager{display:flex;gap:12px;align-items:center;justify-content:center;margin-top:16px}
+@media(max-width:480px){.slip-grid{grid-template-columns:1fr 1fr;gap:8px}.slip-big{height:200px}.slip-actions{flex-direction:column}}

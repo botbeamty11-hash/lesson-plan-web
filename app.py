@@ -325,6 +325,13 @@ def download(job_id, kind):
 
 
 # ---------------- admin ----------------
+def _admin_back(default_anchor):
+    """Return to the top-up board (keeping its filter/page) when the form came from it."""
+    if request.form.get("from_board"):
+        args = {k: v for k in ("board", "board_page") if (v := request.form.get(k))}
+        return url_for("admin", **args) + "#board"
+    return url_for("admin") + default_anchor
+
 @app.route("/admin", methods=["GET", "POST"])
 def admin():
     if request.method == "POST" and request.form.get("action") == "login":
@@ -394,7 +401,7 @@ def admin():
             flash(f"อนุมัติการชำระเงินงาน {jid} แล้ว — เข้าคิวแล้ว")
         except (KeyError, ValueError) as e:
             flash(f"อนุมัติไม่สำเร็จ: {e}")
-        return redirect(url_for("admin") + "#payments")
+        return redirect(_admin_back("#payments"))
     if action == "pay_reject":
         jid = request.form.get("job_id") or ""
         reason = (request.form.get("reason") or "").strip() or "สลิปไม่ถูกต้อง"
@@ -403,7 +410,7 @@ def admin():
             flash(f"ปฏิเสธสลิปงาน {jid}: {reason}")
         except (KeyError, ValueError) as e:
             flash(f"ปฏิเสธไม่สำเร็จ: {e}")
-        return redirect(url_for("admin") + "#payments")
+        return redirect(_admin_back("#payments"))
     tpl = None
     if os.path.exists(store.TEMPLATE_PATH):
         st = os.stat(store.TEMPLATE_PATH)
@@ -422,7 +429,12 @@ def admin():
     settings = store.load_settings()
     totals = store.payment_totals()
     has_qr = os.path.isfile(store.QR_IMAGE_PATH)
-    return render_template("admin.html", tpl=tpl, jobs=jobs, status_th=STATUS_TH,
+    try:
+        board_page = int(request.args.get("board_page") or 1)
+    except ValueError:
+        board_page = 1
+    board = store.topup_board(request.args.get("board") or "all", board_page)
+    return render_template("admin.html", board=board, tpl=tpl, jobs=jobs, status_th=STATUS_TH,
                            pay_jobs=pay_jobs, pay_filter=pay_filter, settings=settings,
                            totals=totals, has_qr=has_qr)
 
