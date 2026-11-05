@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}เติมพ้อยท์ | ครูดี{% endblock %}
+{% block content %}
+<div class="card">
+  <h1>เติมพ้อยท์</h1>
+  <p class="sub">คงเหลือตอนนี้ <b>{{ user.points|default(0) }}</b> พ้อยท์ — โอน PromptPay ตามยอดแพ็ก แล้วอัปโหลดสลิป</p>
+  <form method="post" class="pkg-grid">
+    {% for p in packages %}
+    <label class="pkg-card">
+      <input type="radio" name="package_id" value="{{ p.id }}" {% if loop.first %}required{% endif %}>
+      <div class="pkg-body">
+        <div class="pkg-pts">{{ p.points }} พ้อยท์</div>
+        <div class="pkg-baht">{{ '%.0f'|format(p.baht) }} บาท</div>
+        <div class="hint">{{ p.label }}</div>
+      </div>
+    </label>
+    {% endfor %}
+    <div class="actions full"><button class="btn big" type="submit">ไปชำระเงิน</button></div>
+  </form>
+</div>
+{% endblock %}

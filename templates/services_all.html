@@ -1,29 +1,27 @@
 {% extends "base.html" %}
-{% block title %}บริการทั้งหมด{% endblock %}
+{% block title %}{{ meta.title }}{% endblock %}
 {% block content %}
 <div class="card">
-  <h1>บริการทั้งหมด</h1>
-  <p class="sub">เลือกกลุ่ม หรือเลื่อนดูรายการด้านล่าง</p>
+  <h1>บริการทั้งหมดสำหรับครู</h1>
+  <p class="sub">แผนการจัดการเรียนรู้ สื่อการสอน ใบงาน ข้อสอบ ว.PA SAR วิจัยในชั้นเรียน และแปลงไฟล์ภาษาไทย</p>
 </div>
 {% for group, services in groups %}
 <div class="card">
-  <h2><span class="gc-icon inline">{{ group_icons.get(group, '📦') }}</span> {{ group }}</h2>
+  <h2><span class="gc-icon inline svg" aria-hidden="true">{{ group_svg.get(group,'')|safe }}</span> {{ group }}</h2>
   <ul class="svc-list">
   {% for s in services %}
     <li>
-      <a href="{% if s.special_form %}{{ url_for('plan_form') }}{% else %}{{ url_for('service_form', service_id=s.id) }}{% endif %}">
-        <span class="svc-ico">{{ s.icon or '📄' }}</span>
+      <a href="{% if s.special_form %}/plan{% else %}{{ url_for('service_form', service_id=s.id) }}{% endif %}">
+        <span class="svc-ico" aria-hidden="true">{{ s.icon or "•" }}</span>
         <span class="svc-text">
-          <b>{{ s.name }}</b>
+          <strong>{{ s.name }}</strong>
           <span class="svc-desc">{{ s.description }}</span>
         </span>
-        <span class="svc-go">›</span>
+        <span class="svc-go">→</span>
       </a>
     </li>
   {% endfor %}
   </ul>
 </div>
-{% else %}
-<div class="card"><p class="hint">ยังไม่มีบริการ</p></div>
 {% endfor %}
 {% endblock %}

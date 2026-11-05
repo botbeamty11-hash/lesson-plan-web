@@ -2,6 +2,7 @@
 {% block content %}
 <div class="card"><div style="display:flex;justify-content:space-between;align-items:center"><h1>ผู้ดูแลระบบ</h1>
 <form method="post" action="/admin/logout"><button class="btn sec">ออกจากระบบ</button></form></div>
+<p class="admin-toc hint"><a href="#board">บอร์ดยอดเติม</a> · <a href="#users">ผู้ใช้ &amp; พ้อยท์</a> · <a href="#services">บริการ</a> · <a href="#payments">การชำระเงิน</a> · <a href="#settings">ตั้งค่า PromptPay</a> · <a href="#jobs">งานล่าสุด</a></p>
 <p class="hint">ผู้ใช้ต้องอัปโหลดฟอร์มของโรงเรียนเองทุกครั้ง แม่แบบด้านล่างใช้เป็นสำรองภายในเท่านั้น (กรณีงานไม่มีฟอร์มแนบ)</p>
 {% if tpl %}<p class="sub">แม่แบบสำรอง: main.docx ({{ tpl.size_kb }} KB, อัปเดต {{ tpl.mtime }}) · <a href="/admin/template">ดาวน์โหลด</a></p>
 {% else %}<p class="flash">ยังไม่มีแม่แบบ</p>{% endif %}
@@ -117,13 +118,89 @@
 </div>
 
 
+
+<div class="card" id="users">
+  <h3 style="margin-top:0">👤 ผู้ใช้ &amp; พ้อยท์</h3>
+  <p class="hint">ผู้ใช้ทั้งหมด {{ pts_totals.users }} · พ้อยท์คงเหลือรวม {{ pts_totals.points_outstanding }}</p>
+  <form method="get" action="/admin#users" class="board-filter" style="gap:10px">
+    <input type="search" name="user_q" value="{{ user_q or '' }}" placeholder="ค้นหาอีเมล / ชื่อ" style="max-width:280px">
+    <button class="btn sm" type="submit">ค้นหา</button>
+  </form>
+  <div style="overflow-x:auto"><table>
+    <tr><th>ชื่อ</th><th>อีเมล</th><th>พ้อยท์</th><th>เข้าใช้ล่าสุด</th><th></th></tr>
+    {% for u in user_list[:50] %}
+    <tr {% if selected_user and selected_user.id == u.id %}style="background:#eff6ff"{% endif %}>
+      <td>{{ u.name }}</td>
+      <td class="mono small">{{ u.email }}</td>
+      <td><b>{{ u.points|default(0) }}</b></td>
+      <td class="small">{{ u.last_login or '-' }}</td>
+      <td><a class="btn sm sec" href="/admin?user_id={{ u.id }}{% if user_q %}&user_q={{ user_q }}{% endif %}#users">ดู</a></td>
+    </tr>
+    {% else %}
+    <tr><td colspan="5" class="hint">ยังไม่มีผู้ใช้ (เข้าสู่ระบบด้วย Google แล้วจะปรากฏที่นี่)</td></tr>
+    {% endfor %}
+  </table></div>
+
+  {% if selected_user %}
+  <hr style="border:none;border-top:1px solid var(--bd);margin:18px 0">
+  <h4 style="margin:0 0 8px">{{ selected_user.name }} · {{ selected_user.email }}</h4>
+  <p>คงเหลือ <b>{{ selected_user.points|default(0) }}</b> พ้อยท์ · สมัคร {{ selected_user.created_at }}</p>
+  <form method="post" class="grid" style="align-items:end;margin:12px 0">
+    <input type="hidden" name="action" value="points_adjust">
+    <input type="hidden" name="user_id" value="{{ selected_user.id }}">
+    <input type="hidden" name="user_q" value="{{ user_q or '' }}">
+    <div><label>จำนวน (+ เพิ่ม / − หัก)</label><input type="number" name="amount" required placeholder="เช่น 100 หรือ -20"></div>
+    <div class="full"><label>เหตุผล</label><input type="text" name="reason" placeholder="เช่น เติมแอดมิน / ชดเชย"></div>
+    <div><button class="btn" type="submit">บันทึกพ้อยท์</button></div>
+  </form>
+  <h4>สมุดบัญชี (ล่าสุด)</h4>
+  <div style="overflow-x:auto"><table>
+    <tr><th>เวลา</th><th>ประเภท</th><th>จำนวน</th><th>คงเหลือ</th><th>เหตุผล</th><th>งาน</th></tr>
+    {% for e in (selected_user.ledger or [])[:40] %}
+    <tr>
+      <td class="small">{{ e.at }}</td>
+      <td>{{ e.type }}</td>
+      <td>{% if e.amount > 0 %}+{% endif %}{{ e.amount }}</td>
+      <td>{{ e.balance_after }}</td>
+      <td>{{ e.reason }}</td>
+      <td class="mono small">{% if e.job_id %}<a href="/job/{{ e.job_id }}">{{ e.job_id }}</a>{% else %}-{% endif %}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="6" class="hint">ยังไม่มีรายการ</td></tr>
+    {% endfor %}
+  </table></div>
+  {% endif %}
+
+  <hr style="border:none;border-top:1px solid var(--bd);margin:22px 0">
+  <h4 style="margin:0 0 8px">ตั้งค่าเติมพ้อยท์ (PromptPay)</h4>
+  <form method="post">
+    <input type="hidden" name="action" value="points_settings">
+    <label class="chk"><input type="checkbox" name="points_topup_enabled" value="1" {% if settings.points_topup_enabled %}checked{% endif %}> เปิดให้เติมพ้อยท์</label>
+    <p class="hint">แพ็กเกจ (บาท → พ้อยท์) — ว่างแถวที่ไม่ใช้</p>
+    <div style="overflow-x:auto"><table>
+      <tr><th>รหัส</th><th>บาท</th><th>พ้อยท์</th><th>ป้าย</th></tr>
+      {% set pkgs = settings.points_packages or [] %}
+      {% for i in range(5) %}
+      {% set p = pkgs[i] if i < pkgs|length else {} %}
+      <tr>
+        <td><input type="text" name="pkg_id_{{ i }}" value="{{ p.id or '' }}" style="width:5rem"></td>
+        <td><input type="number" name="pkg_baht_{{ i }}" value="{{ p.baht or '' }}" min="0" step="1" style="width:6rem"></td>
+        <td><input type="number" name="pkg_points_{{ i }}" value="{{ p.points or '' }}" min="0" step="1" style="width:6rem"></td>
+        <td><input type="text" name="pkg_label_{{ i }}" value="{{ p.label or '' }}" style="min-width:12rem"></td>
+      </tr>
+      {% endfor %}
+    </table></div>
+    <div class="actions"><button class="btn">💾 บันทึกตั้งค่าพ้อยท์</button></div>
+  </form>
+</div>
+
 <div class="card" id="services">
   <h3 style="margin-top:0">🛠️ บริการ (แคตตาล็อก)</h3>
   <p class="hint">ราคาเก็บไว้ในระบบ แต่ครูจะเห็นราคาเฉพาะบริการที่เปิด <b>เก็บเงิน</b> — ค่าเริ่มต้นบริการใหม่ปิดเก็บเงิน (ส่งตรงเข้าคิว)</p>
   <form method="post">
     <input type="hidden" name="action" value="save_services">
     <div style="overflow-x:auto"><table>
-      <tr><th>เปิด</th><th>เก็บเงิน</th><th>บริการ</th><th>กลุ่ม</th><th>ราคา</th><th>หน่วย</th><th>ทำโดย</th><th>งาน</th><th>คำอธิบาย</th></tr>
+      <tr><th>เปิด</th><th>เก็บเงิน</th><th>บริการ</th><th>กลุ่ม</th><th>ราคา</th><th>พ้อยท์</th><th>หน่วย</th><th>ทำโดย</th><th>งาน</th><th>คำอธิบาย</th></tr>
       {% for s in services %}
       <tr>
         <td><input type="checkbox" name="enabled_{{ s.id }}" value="1" {% if s.enabled %}checked{% endif %}></td>
@@ -131,6 +208,7 @@
         <td>{{ s.icon or '' }} {{ s.name }}<div class="mono small">{{ s.id }}</div></td>
         <td>{{ s.group }}</td>
         <td><input type="number" name="price_{{ s.id }}" value="{{ s.price }}" min="0" step="1" style="width:5.5rem"></td>
+        <td><input type="number" name="points_{{ s.id }}" value="{{ s.points_cost|default(0) }}" min="0" step="1" style="width:4.5rem" title="พ้อยท์ต่อครั้ง"></td>
         <td>{{ unit_label(s.unit) }}</td>
         <td>{% if s.fulfil == 'auto' %}อัตโนมัติ{% else %}worker{% endif %}</td>
         <td>{{ svc_stats.get(s.id, 0) }}</td>

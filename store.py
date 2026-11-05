@@ -81,6 +81,13 @@ def save(job):
     os.replace(tmp, os.path.join(d, "job.json"))
 
 
+DEFAULT_POINTS_PACKAGES = [
+    {"id": "p100", "baht": 100, "points": 100, "label": "100 พ้อยท์"},
+    {"id": "p300", "baht": 300, "points": 330, "label": "330 พ้อยท์ (โบนัส 30)"},
+    {"id": "p500", "baht": 500, "points": 600, "label": "600 พ้อยท์ (โบนัส 100)"},
+]
+
+
 def default_settings():
     return {
         "price_per_plan": DEFAULT_PRICE_PER_PLAN,
@@ -88,6 +95,8 @@ def default_settings():
         "promptpay_id": DEFAULT_PROMPTPAY_ID,
         "qr_image": "promptpay_qr.png" if os.path.isfile(QR_IMAGE_PATH) else None,
         "qr_decoded_id": None,
+        "points_topup_enabled": False,
+        "points_packages": list(DEFAULT_POINTS_PACKAGES),
     }
 
 
@@ -99,7 +108,8 @@ def load_settings():
                 data = json.load(f)
             if isinstance(data, dict):
                 s.update({k: data[k] for k in ("price_per_plan", "payee_name", "promptpay_id",
-                                               "qr_image", "qr_decoded_id") if k in data})
+                                               "qr_image", "qr_decoded_id",
+                                               "points_topup_enabled", "points_packages") if k in data})
         except Exception:
             pass
     try:
@@ -108,6 +118,29 @@ def load_settings():
         s["price_per_plan"] = DEFAULT_PRICE_PER_PLAN
     s["payee_name"] = (s.get("payee_name") or DEFAULT_PAYEE_NAME).strip() or DEFAULT_PAYEE_NAME
     s["promptpay_id"] = (s.get("promptpay_id") or "").strip()
+    s["points_topup_enabled"] = bool(s.get("points_topup_enabled"))
+    pkgs = s.get("points_packages")
+    if not isinstance(pkgs, list) or not pkgs:
+        s["points_packages"] = list(DEFAULT_POINTS_PACKAGES)
+    else:
+        clean = []
+        for p in pkgs:
+            if not isinstance(p, dict):
+                continue
+            try:
+                baht = float(p.get("baht") or 0)
+                pts = int(p.get("points") or 0)
+            except (TypeError, ValueError):
+                continue
+            if baht <= 0 or pts <= 0:
+                continue
+            clean.append({
+                "id": str(p.get("id") or f"p{int(baht)}"),
+                "baht": baht,
+                "points": pts,
+                "label": str(p.get("label") or f"{pts} พ้อยท์"),
+            })
+        s["points_packages"] = clean or list(DEFAULT_POINTS_PACKAGES)
     if not os.path.isfile(QR_IMAGE_PATH):
         s["qr_image"] = None
     return s
@@ -132,6 +165,10 @@ def save_settings(updates):
             s["qr_image"] = updates["qr_image"]
         if "qr_decoded_id" in updates:
             s["qr_decoded_id"] = updates["qr_decoded_id"]
+        if "points_topup_enabled" in updates:
+            s["points_topup_enabled"] = bool(updates["points_topup_enabled"])
+        if "points_packages" in updates and isinstance(updates["points_packages"], list):
+            s["points_packages"] = updates["points_packages"]
         tmp = SETTINGS_PATH + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(s, f, ensure_ascii=False, indent=2)
@@ -378,6 +415,31 @@ def approve_payment(job_id, *, slip_ref=None, amount=None, transfer_time=None,
         pay["verified_by"] = by
         pay["reject_reason"] = None
         pay["duplicate_ref_flag"] = False
+        # Points top-up: credit and mark done (no worker queue)
+        if j.get("service_id") == "points_topup" or j.get("fulfil") == "topup":
+            pts = int((j.get("inputs") or {}).get("points") or pay.get("points_credit") or 0)
+            uid = j.get("user_id")
+            if uid and pts > 0 and not j.get("points_credited"):
+                try:
+                    import users
+                    users.adjust_points(
+                        uid, pts,
+                        reason=f"เติมพ้อยท์แพ็ก {pay.get('amount_due') or ''}฿",
+                        job_id=j["id"], admin=by, typ="topup",
+                    )
+                    j["points_credited"] = pts
+                except Exception as e:
+                    # keep job in review if credit fails
+                    pay["note"] = (pay.get("note") or "") + f" | credit failed: {e}"
+                    save(j)
+                    raise ValueError(f"เติมพ้อยท์ไม่สำเร็จ: {e}")
+            j["status"] = "done"
+            j["queued_at"] = j.get("queued_at") or now_iso()
+            j["started_at"] = j.get("started_at") or now_iso()
+            j["finished_at"] = now_iso()
+            save(j)
+            j["_run_auto"] = False
+            return j
         j["status"] = "queued"
         j["queued_at"] = now_iso()
         save(j)
@@ -491,7 +553,7 @@ def eta_factor(job):
 
 
 
-def create_service_job(service, inputs, uploads, *, file_count=1):
+def create_service_job(service, inputs, uploads, *, file_count=1, user_id=None, points_spent=0):
     """Create a job for a catalog service (not lesson_plan special form).
     uploads: {field_id: (filename, save_fn)} or {field_id: [(filename, save_fn), ...]} for multi.
     inputs: dict of text/number/select values (no files).
@@ -542,6 +604,8 @@ def create_service_job(service, inputs, uploads, *, file_count=1):
         "id": job_id,
         "service_id": service["id"],
         "service_name": service["name"],
+        "user_id": user_id,
+        "points_spent": int(points_spent or 0),
         "fulfil": service.get("fulfil") or "worker",
         "collect_payment": collect,
         "status": "queued" if not collect else "awaiting_payment",
@@ -621,7 +685,7 @@ def try_auto_fulfil(job_id):
         return fail(job_id, f"ทำอัตโนมัติไม่สำเร็จ: {e}")
 
 
-def create_job(uploads, fields, note, plan_counter=None, instructions=None, options=None, addons=None):
+def create_job(uploads, fields, note, plan_counter=None, instructions=None, options=None, addons=None, user_id=None):
     """uploads: {"template": (filename, save_fn), "source": (filename, save_fn)}.
     save_fn(dest_path) writes the uploaded file. If no template upload is given,
     the admin default template (data/template/main.docx) is copied as a fallback.
@@ -667,6 +731,8 @@ def create_job(uploads, fields, note, plan_counter=None, instructions=None, opti
         "id": job_id,
         "service_id": "lesson_plan",
         "service_name": "แผนการจัดการเรียนรู้",
+        "user_id": user_id,
+        "points_spent": 0,
         "fulfil": "worker",
         "collect_payment": True,
         "status": "queued",
@@ -1057,3 +1123,68 @@ def topup_board(filt="all", page=1, per_page=24):
     return {"stats": stats, "review": review, "rejected": rejected,
             "slips": slips[(page - 1) * per_page: page * per_page],
             "filter": filt, "page": page, "pages": pages, "total": total}
+
+def create_topup_job(user_id, package):
+    """Create a points top-up payment job (PromptPay slip → credit on approve)."""
+    job_id = new_job_id()
+    d = job_dir(job_id)
+    os.makedirs(d)
+    baht = float(package["baht"])
+    pts = int(package["points"])
+    job = {
+        "id": job_id,
+        "service_id": "points_topup",
+        "service_name": "เติมพ้อยท์",
+        "user_id": user_id,
+        "points_spent": 0,
+        "fulfil": "topup",
+        "collect_payment": True,
+        "status": "awaiting_payment",
+        "created_at": now_iso(),
+        "started_at": None,
+        "finished_at": None,
+        "queued_at": None,
+        "fields": {},
+        "inputs": {
+            "package_id": package.get("id"),
+            "points": pts,
+            "baht": baht,
+            "label": package.get("label") or f"{pts} พ้อยท์",
+        },
+        "note": f"เติมพ้อยท์ {pts} จาก {baht} บาท",
+        "instructions": "",
+        "options": [],
+        "addons": [],
+        "from_scratch": True,
+        "files": {"source": None, "template": None, "result_docx": None, "result_pdf": None,
+                  "slip": None, "uploads": [], "template_is_default": False,
+                  "source_original_name": None, "template_original_name": None},
+        "results": [],
+        "plan_count": 1,
+        "plan_numbers": [],
+        "plan_mode": "all",
+        "plan_selected": None,
+        "effective_plan_count": 1,
+        "error": None,
+        "payment": None,
+        "points_credited": 0,
+    }
+    _init_payment(job)
+    job["payment"]["amount_due"] = baht
+    job["payment"]["plan_count_billed"] = 1
+    job["payment"]["qty"] = 1
+    job["payment"]["unit_price"] = baht
+    job["payment"]["price_per_plan"] = baht
+    job["payment"]["points_credit"] = pts
+    job["_amount_locked"] = True
+    with lock():
+        save(job)
+    return job
+
+
+def jobs_for_user(user_id, limit=100):
+    if not user_id:
+        return []
+    out = [j for j in all_jobs() if j.get("user_id") == user_id]
+    out.sort(key=lambda j: j.get("created_at") or "", reverse=True)
+    return out[:limit]

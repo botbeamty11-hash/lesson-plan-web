@@ -1,11 +1,40 @@
 {% extends "base.html" %}
-{% block title %}{{ service.name }}{% endblock %}
+{% block title %}{% if meta is defined %}{{ meta.title }}{% else %}{{ service.name }} | ครูดี{% endif %}{% endblock %}
+{% block jsonld %}
+{% if jsonld_service %}
+<script type="application/ld+json">
+{{ {
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Service",
+      "name": service.name,
+      "description": service.description,
+      "provider": {"@type": "Organization", "name": "ครูดี", "url": site_url},
+      "areaServed": "TH",
+      "url": site_url + "/services/" + service.id
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {"@type": "ListItem", "position": 1, "name": "หน้าแรก", "item": site_url + "/"},
+        {"@type": "ListItem", "position": 2, "name": service.group, "item": site_url + "/group/" + service.group},
+        {"@type": "ListItem", "position": 3, "name": service.name, "item": site_url + "/services/" + service.id}
+      ]
+    }
+  ]
+}|tojson }}
+</script>
+{% endif %}
+{% endblock %}
 {% block content %}
+
 <div class="card">
   <p class="crumb"><a href="/">หน้าแรก</a> · <a href="{{ url_for('group_page', group_name=service.group) }}">{{ service.group }}</a> · {{ service.name }}</p>
   <h1>{{ service.icon or '📄' }} {{ service.name }}</h1>
   <p class="sub">{{ service.description }}</p>
-  {% if show_price %}
+  {% if service.points_cost and service.points_cost > 0 %}<div class="price-note">ใช้ {{ service.points_cost }} พ้อยท์ต่องาน</div>{% endif %}
+{% if show_price %}
   <p class="price-note">ราคา {{ '%.0f'|format(service.price) }} บาท {{ unit_label(service.unit) }}</p>
   {% endif %}
 
@@ -112,4 +141,5 @@ document.getElementById('sf').addEventListener('submit',e=>{
   err.style.display='none';
   const b=document.getElementById('sb');b.disabled=true;b.textContent='⏳ กำลังส่ง...';
 });
-</script>{% endblock %}
+</script>
+{% endblock %}

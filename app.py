@@ -8,10 +8,13 @@ except ImportError:
     pass
 
 from flask import (Flask, abort, jsonify, redirect, render_template, request,
-                   send_file, session, url_for, flash)
+                   send_file, session, url_for, flash, g)
 from werkzeug.middleware.proxy_fix import ProxyFix
+from functools import wraps
 import store
 import catalog
+import users
+import brand
 from plancount import detect_plans
 
 ALLOWED = {".doc", ".docx", ".pdf"}
@@ -21,6 +24,10 @@ MAX_MB = 20
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
 WORKER_TOKEN = os.environ.get("WORKER_TOKEN", "")
 WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "").strip()
+GOOGLE_CLIENT_ID = (os.environ.get("GOOGLE_CLIENT_ID") or "").strip()
+GOOGLE_CLIENT_SECRET = (os.environ.get("GOOGLE_CLIENT_SECRET") or "").strip()
+GOOGLE_OAUTH_READY = bool(GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET)
+LP_TEST_LOGIN = os.environ.get("LP_TEST_LOGIN", "").strip() == "1"
 
 log = logging.getLogger("lp-web")
 logging.basicConfig(level=logging.INFO)
@@ -35,6 +42,29 @@ app.secret_key = _secret
 app.config["MAX_CONTENT_LENGTH"] = (10 * MAX_MB + 2) * 1024 * 1024  # multi-file service uploads
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+app.config["SESSION_COOKIE_SECURE"] = os.environ.get("LP_COOKIE_SECURE", "1") not in ("0", "false", "False")
+
+# Google OAuth (Authlib) — optional; site still works without credentials
+_oauth = None
+if GOOGLE_OAUTH_READY:
+    try:
+        from authlib.integrations.flask_client import OAuth
+        _oauth = OAuth(app)
+        _oauth.register(
+            name="google",
+            client_id=GOOGLE_CLIENT_ID,
+            client_secret=GOOGLE_CLIENT_SECRET,
+            server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
+            client_kwargs={"scope": "openid email profile"},
+        )
+        log.info("Google OAuth enabled")
+    except Exception as e:
+        log.warning("Google OAuth setup failed: %s", e)
+        _oauth = None
+        GOOGLE_OAUTH_READY = False
+else:
+    log.warning("GOOGLE_CLIENT_ID/SECRET missing: Google login disabled (friendly UI message)")
+
 if len(ADMIN_PASSWORD) < 8:
     log.warning("ADMIN_PASSWORD missing/short (<8): /admin login is DISABLED")
     ADMIN_PASSWORD = ""
@@ -74,7 +104,88 @@ SLIP_MAX_MB = 10
 QR_UPLOAD_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 
 
+
+def current_user():
+    """Logged-in teacher from session, or None."""
+    uid = session.get("user_id")
+    if not uid:
+        return None
+    if getattr(g, "_user_cached", None) and g._user_cached.get("id") == uid:
+        return g._user_cached
+    u = users.load_user(uid)
+    g._user_cached = u
+    return u
+
+
+def _safe_next(raw):
+    """Allow only same-site relative paths (no protocol-relative //)."""
+    if not raw:
+        return None
+    raw = str(raw).strip()
+    if raw.startswith("/") and not raw.startswith("//"):
+        # drop trailing ? from Flask full_path
+        if raw.endswith("?"):
+            raw = raw[:-1]
+        return raw or "/"
+    return None
+
+
+def _return_path_after_login():
+    """Where to send the teacher after Google login (never a POST-only submit URL)."""
+    nxt = _safe_next(request.values.get("next")) or _safe_next(request.referrer and request.referrer.replace(request.url_root.rstrip("/"), "") if request.referrer else None)
+    if nxt:
+        return nxt
+    path = request.path or "/"
+    if path == "/submit":
+        return "/plan"
+    if path.endswith("/submit"):
+        return path[: -len("/submit")] or "/"
+    if request.method == "POST":
+        ref = request.referrer or ""
+        # prefer referer path if same host
+        try:
+            from urllib.parse import urlparse
+            p = urlparse(ref)
+            if p.path and (not p.netloc or p.netloc == request.host):
+                return p.path
+        except Exception:
+            pass
+    return path if request.method == "GET" else "/"
+
+
+def login_required(view):
+    """Require Google (or test) login for mutating / private teacher actions."""
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        if current_user():
+            return view(*args, **kwargs)
+        nxt = _return_path_after_login()
+        session["after_login"] = nxt
+        flash("กรุณาเข้าสู่ระบบด้วย Google ก่อนใช้งาน")
+        return redirect(url_for("login", next=nxt))
+    return wrapped
+
+
+def _public_url(path="/"):
+    """Absolute URL honouring HTTPS behind Render ProxyFix."""
+    return request.url_root.rstrip("/") + path
+
+
+@app.context_processor
+def inject_globals():
+    u = current_user()
+    return {
+        "current_user": u,
+        "google_oauth_ready": bool(_oauth),
+        "points_topup_enabled": bool(store.load_settings().get("points_topup_enabled")),
+        "brand": brand,
+        "site_name": brand.SITE_NAME,
+        "site_url": brand.SITE_URL,
+    }
+
+
 def fire_webhook(job_id):
+
     if not WEBHOOK_URL:
         return
     def run():
@@ -99,8 +210,13 @@ def too_large(e):
 @app.get("/")
 def index():
     groups = catalog.services_by_group(include_disabled=False, home=True)
+    meta = brand.page_meta(
+        title="ครูดี — ทำแผนการสอน สื่อการสอน ใบงาน ข้อสอบ สำหรับครู",
+        description=brand.SITE_DESC,
+        path="/",
+    )
     return render_template("home.html", groups=groups, group_icons=catalog.GROUP_ICONS,
-                           unit_label=catalog.unit_label)
+                           group_svg=brand.GROUP_SVG, unit_label=catalog.unit_label, meta=meta)
 
 
 @app.get("/plan")
@@ -109,13 +225,19 @@ def plan_form():
     from datetime import datetime
     be = datetime.now(store.TZ).year + 543
     svc = catalog.get_service("lesson_plan") or {}
+    meta = brand.page_meta(
+        title="ทำแผนการจัดการเรียนรู้ / แผนการสอนออนไลน์",
+        description="อัปโหลดฟอร์มโรงเรียน แล้วให้ครูดีจัดทำแผนการจัดการเรียนรู้ Word ให้ — รองรับสื่อ ใบงาน ข้อสอบพร้อมเฉลย",
+        path="/plan",
+    )
     return render_template("index.html", fields=FIELDS, max_mb=MAX_MB, uploads=UPLOADS,
                            required_uploads=REQUIRED_UPLOADS, options=OPTIONS, min_instr=MIN_INSTRUCTIONS,
                            months=THAI_MONTHS, years=list(range(be - 1, be + 3)), this_year=be,
-                           addons=svc.get("addons") or [], service=svc)
+                           addons=svc.get("addons") or [], service=svc, meta=meta)
 
 
 @app.post("/submit")
+@login_required
 def submit():
     ups = {}
     instructions = (request.form.get("instructions") or request.form.get("note") or "").strip()
@@ -139,8 +261,10 @@ def submit():
         flash("ไม่ได้แนบไฟล์ที่ 2 (ไฟล์ข้อมูล): กรุณาพิมพ์คำสั่งเพิ่มเติมถึงผู้จัดทำ "
               "โดยระบุอย่างน้อย วิชา / ชั้น / เรื่อง ที่ต้องการ (เช่น \"ทำแผนที่ 1 เรื่อง เศษส่วน ป.4\")")
         return redirect(url_for("plan_form"))
+    u = current_user()
     job = store.create_job(ups, fields, instructions, plan_counter=detect_plans,
-                           instructions=instructions, options=options, addons=addon_ids)
+                           instructions=instructions, options=options, addons=addon_ids,
+                           user_id=u["id"] if u else None)
     d = store.job_dir(job["id"])
     for kind in ("template", "source"):
         if job["files"].get(kind) and os.path.getsize(os.path.join(d, job["files"][kind])) > MAX_MB * 1024 * 1024:
@@ -227,7 +351,13 @@ def _parse_service_form(service):
 @app.get("/services")
 def services_all():
     groups = catalog.services_by_group(include_disabled=False, home=True)
-    return render_template("services_all.html", groups=groups, group_icons=catalog.GROUP_ICONS)
+    meta = brand.page_meta(
+        title="บริการทั้งหมดสำหรับครู — แผนการสอน สื่อ ใบงาน แปลงไฟล์",
+        description="รวมบริการครูดี: ทำแผนการจัดการเรียนรู้ สื่อการสอน ใบงาน ข้อสอบ ว.PA SAR แปลง PDF เป็น Word ภาษาไทย",
+        path="/services",
+    )
+    return render_template("services_all.html", groups=groups, group_icons=catalog.GROUP_ICONS,
+                           group_svg=brand.GROUP_SVG, meta=meta)
 
 
 @app.get("/group/<path:group_name>")
@@ -235,9 +365,15 @@ def group_page(group_name):
     groups = dict(catalog.services_by_group(include_disabled=False, home=True))
     if group_name not in groups:
         abort(404)
+    meta = brand.page_meta(
+        title=f"{group_name} — บริการสำหรับครู",
+        description=f"บริการ{group_name} บนครูดี: สะดวก รวดเร็ว สำหรับครูไทย",
+        path=f"/group/{group_name}",
+    )
     return render_template("group.html", group=group_name, services=groups[group_name],
                            icon=catalog.GROUP_ICONS.get(group_name, "📦"),
-                           unit_label=catalog.unit_label)
+                           icon_svg=brand.group_icon(group_name),
+                           unit_label=catalog.unit_label, meta=meta)
 
 
 @app.get("/services/<service_id>")
@@ -251,13 +387,21 @@ def service_form(service_id):
     required, optional = [], []
     for f in svc.get("inputs") or []:
         (required if f.get("required") else optional).append(f)
+    meta = brand.page_meta(
+        title=f"{svc.get('name')} — สั่งงานออนไลน์สำหรับครู",
+        description=(svc.get("description") or "")[:160] or brand.SITE_DESC,
+        path=f"/services/{service_id}",
+        og_type="product",
+    )
     return render_template("service_form.html", service=svc, required_fields=required,
                            optional_fields=optional, max_mb=MAX_MB,
                            unit_label=catalog.unit_label,
-                           show_price=bool(svc.get("collect_payment")))
+                           show_price=bool(svc.get("collect_payment")),
+                           meta=meta, jsonld_service=True)
 
 
 @app.post("/services/<service_id>/submit")
+@login_required
 def service_submit(service_id):
     if service_id == "lesson_plan":
         return redirect(url_for("plan_form"))
@@ -268,11 +412,36 @@ def service_submit(service_id):
     if err:
         flash(err)
         return redirect(url_for("service_form", service_id=service_id))
+    u = current_user()
+    cost = int(svc.get("points_cost") or 0)
+    if cost > 0:
+        bal = int((u or {}).get("points") or 0)
+        if bal < cost:
+            flash(f"พ้อยท์ไม่พอ — บริการนี้ใช้ {cost} พ้อยท์ (คุณมี {bal} พ้อยท์)")
+            return redirect(url_for("service_form", service_id=service_id))
     # size check helper after create
     file_count = 0
     for v in (uploads or {}).values():
         file_count += len(v) if isinstance(v, list) else 1
-    job = store.create_service_job(svc, inputs, uploads, file_count=max(1, file_count))
+    # Deduct points before creating job (atomic-ish under users lock)
+    if cost > 0:
+        try:
+            users.ensure_points(u["id"], cost, reason=f"ใช้บริการ {svc.get('name')}", job_id=None)
+        except ValueError as e:
+            flash(str(e))
+            return redirect(url_for("service_form", service_id=service_id))
+    job = store.create_service_job(svc, inputs, uploads, file_count=max(1, file_count),
+                                   user_id=u["id"] if u else None, points_spent=cost)
+    if cost > 0 and job:
+        # backfill job_id on latest ledger entry
+        try:
+            uu = users.load_user(u["id"])
+            if uu and uu.get("ledger"):
+                if not uu["ledger"][0].get("job_id"):
+                    uu["ledger"][0]["job_id"] = job["id"]
+                    users.save_user(uu)
+        except Exception:
+            pass
     d = store.job_dir(job["id"])
     # enforce per-file size
     for name in os.listdir(d):
@@ -282,6 +451,11 @@ def service_submit(service_id):
         if os.path.isfile(p) and os.path.getsize(p) > MAX_MB * 1024 * 1024:
             import shutil as _sh
             _sh.rmtree(d)
+            if cost > 0 and u:
+                try:
+                    users.adjust_points(u["id"], cost, reason="คืนพ้อยท์ — ไฟล์ใหญ่เกินไป", job_id=None, typ="refund")
+                except Exception:
+                    pass
             flash(f"ไฟล์ใหญ่เกินไป (สูงสุด {MAX_MB} MB ต่อไฟล์)")
             return redirect(url_for("service_form", service_id=service_id))
     # Free auto services: fulfil immediately
@@ -307,7 +481,12 @@ def track_lookup():
         if j:
             return redirect(url_for("job_page", job_id=q))
         flash("ไม่พบรหัสงานนี้")
-    return render_template("track.html")
+    meta = brand.page_meta(
+        title="ติดตามงาน — เช็กสถานะแผนการสอนและเอกสารครู",
+        description="กรอกรหัสงานเพื่อติดตามสถานะการจัดทำแผนการจัดการเรียนรู้ สื่อการสอน ใบงาน หรือเอกสารครูบนครูดี",
+        path="/track",
+    )
+    return render_template("track.html", meta=meta)
 
 
 def plan_choice_text(job):
@@ -519,6 +698,186 @@ def download(job_id, kind):
     return send_file(path, as_attachment=True, download_name=dl)
 
 
+
+# ---------------- auth (Google + test) ----------------
+@app.get("/login")
+def login():
+    nxt = request.args.get("next") or session.get("after_login") or "/"
+    session["after_login"] = nxt
+    meta = brand.page_meta(title="เข้าสู่ระบบ", description="เข้าสู่ระบบครูดีด้วย Google", path="/login")
+    return render_template("login.html", next=nxt, meta=meta,
+                           oauth_ready=bool(_oauth), test_login=LP_TEST_LOGIN)
+
+
+@app.get("/auth/google")
+def auth_google():
+    if not _oauth:
+        flash("ยังไม่ได้ตั้งค่า Google Login — กรุณาติดต่อผู้ดูแลระบบ (ยังไม่มี GOOGLE_CLIENT_ID/SECRET)")
+        return redirect(url_for("login"))
+    nxt = request.args.get("next") or session.get("after_login") or "/"
+    session["after_login"] = nxt
+    redirect_uri = _public_url("/auth/google/callback")
+    return _oauth.google.authorize_redirect(redirect_uri)
+
+
+@app.get("/auth/google/callback")
+def auth_google_callback():
+    if not _oauth:
+        flash("ระบบเข้าสู่ระบบด้วย Google ยังไม่พร้อม")
+        return redirect(url_for("login"))
+    try:
+        token = _oauth.google.authorize_access_token()
+    except Exception as e:
+        log.warning("Google callback failed: %s", e)
+        flash("เข้าสู่ระบบไม่สำเร็จ กรุณาลองใหม่")
+        return redirect(url_for("login"))
+    info = token.get("userinfo") or {}
+    if not info:
+        try:
+            info = _oauth.google.userinfo()
+        except Exception:
+            info = {}
+    sub = info.get("sub")
+    if not sub:
+        flash("ไม่ได้รับข้อมูลผู้ใช้จาก Google")
+        return redirect(url_for("login"))
+    u = users.upsert_google_user(
+        sub=sub,
+        email=info.get("email"),
+        name=info.get("name") or info.get("given_name"),
+        picture=info.get("picture"),
+    )
+    session["user_id"] = u["id"]
+    session.pop("_user_cached", None)
+    nxt = _safe_next(session.pop("after_login", None)) or "/"
+    flash(f"ยินดีต้อนรับ คุณ{u.get('name') or ''}")
+    return redirect(nxt)
+
+
+@app.post("/logout")
+def logout():
+    session.pop("user_id", None)
+    flash("ออกจากระบบแล้ว")
+    return redirect(url_for("index"))
+
+
+@app.get("/auth/test-login")
+def auth_test_login():
+    """Test-only login. Enabled only when LP_TEST_LOGIN=1 (never in production)."""
+    if not LP_TEST_LOGIN:
+        abort(404)
+    email = (request.args.get("email") or "teacher@example.com").strip()
+    name = (request.args.get("name") or "ครูทดสอบ").strip()
+    sub = "test_" + email
+    u = users.upsert_google_user(sub=sub, email=email, name=name, picture="")
+    session["user_id"] = u["id"]
+    nxt = _safe_next(request.args.get("next")) or _safe_next(session.pop("after_login", None)) or "/"
+    return redirect(nxt)
+
+
+@app.get("/my-jobs")
+@login_required
+def my_jobs():
+    u = current_user()
+    jobs = store.jobs_for_user(u["id"])
+    meta = brand.page_meta(title="งานของฉัน", description="รายการงานที่คุณสั่งกับครูดี", path="/my-jobs")
+    return render_template("my_jobs.html", jobs=jobs, status_th=STATUS_TH, meta=meta, user=u)
+
+
+@app.get("/points/topup")
+@login_required
+def points_topup():
+    settings = store.load_settings()
+    if not settings.get("points_topup_enabled"):
+        flash("ยังไม่เปิดให้เติมพ้อยท์ในขณะนี้")
+        return redirect(url_for("index"))
+    meta = brand.page_meta(title="เติมพ้อยท์", description="ซื้อพ้อยท์ด้วย PromptPay", path="/points/topup")
+    return render_template("points_topup.html", packages=settings.get("points_packages") or [],
+                           settings=settings, meta=meta, user=current_user())
+
+
+@app.post("/points/topup")
+@login_required
+def points_topup_submit():
+    settings = store.load_settings()
+    if not settings.get("points_topup_enabled"):
+        flash("ยังไม่เปิดให้เติมพ้อยท์")
+        return redirect(url_for("index"))
+    pid = request.form.get("package_id") or ""
+    pkg = next((p for p in (settings.get("points_packages") or []) if p.get("id") == pid), None)
+    if not pkg:
+        flash("ไม่พบแพ็กเกจที่เลือก")
+        return redirect(url_for("points_topup"))
+    u = current_user()
+    job = store.create_topup_job(u["id"], pkg)
+    return redirect(url_for("pay_page", job_id=job["id"]))
+
+
+# ---------------- SEO ----------------
+@app.get("/robots.txt")
+def robots_txt():
+    lines = [
+        "User-agent: *",
+        "Allow: /",
+        "Disallow: /admin",
+        "Disallow: /admin/",
+        "Disallow: /job/",
+        "Disallow: /auth/",
+        "Disallow: /api/",
+        f"Sitemap: {brand.SITE_URL}/sitemap.xml",
+        "",
+    ]
+    return app.response_class(chr(10).join(lines), mimetype="text/plain; charset=utf-8")
+
+
+@app.get("/sitemap.xml")
+def sitemap_xml():
+    urls = ["/"]
+    urls.append("/services")
+    urls.append("/plan")
+    urls.append("/track")
+    for group, _svcs in catalog.services_by_group(include_disabled=False, home=True):
+        urls.append(f"/group/{group}")
+    for s in catalog.all_services(include_disabled=False):
+        if s.get("special_form"):
+            urls.append("/plan")
+        else:
+            urls.append(f"/services/{s['id']}")
+    seen, ordered = set(), []
+    for u in urls:
+        if u not in seen:
+            seen.add(u)
+            ordered.append(u)
+    items = []
+    for path in ordered:
+        loc = brand.SITE_URL.rstrip("/") + path
+        items.append(f"  <url><loc>{loc}</loc><changefreq>weekly</changefreq></url>")
+    nl = chr(10)
+    xml = '<?xml version="1.0" encoding="UTF-8"?>' + nl
+    xml += '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">' + nl
+    xml += nl.join(items) + nl + "</urlset>" + nl
+    return app.response_class(xml, mimetype="application/xml")
+
+
+@app.get("/site.webmanifest")
+def webmanifest():
+    data = {
+        "name": "ครูดี — บริการครู",
+        "short_name": "ครูดี",
+        "description": brand.SITE_DESC,
+        "start_url": "/",
+        "display": "standalone",
+        "background_color": "#f1f5f9",
+        "theme_color": "#2563eb",
+        "lang": "th",
+        "icons": [
+            {"src": "/static/icons/icon-192.png", "sizes": "192x192", "type": "image/png"},
+            {"src": "/static/icons/icon-512.png", "sizes": "512x512", "type": "image/png"},
+        ],
+    }
+    return jsonify(data)
+
+
 # ---------------- admin ----------------
 def _admin_back(default_anchor):
     """Return to the top-up board (keeping its filter/page) when the form came from it."""
@@ -569,6 +928,9 @@ def admin():
             price_raw = request.form.get(f"price_{sid}")
             if price_raw is not None and price_raw != "":
                 patch["price"] = price_raw
+            pts_raw = request.form.get(f"points_{sid}")
+            if pts_raw is not None and pts_raw != "":
+                patch["points_cost"] = pts_raw
             desc = request.form.get(f"desc_{sid}")
             if desc is not None:
                 patch["description"] = desc
@@ -576,6 +938,43 @@ def admin():
         catalog.save_service_overrides(updates)
         flash("บันทึกบริการเรียบร้อยแล้ว")
         return redirect(url_for("admin") + "#services")
+    if action == "points_settings":
+        enabled = request.form.get("points_topup_enabled") == "1"
+        packages = []
+        for i in range(8):
+            baht = request.form.get(f"pkg_baht_{i}")
+            pts = request.form.get(f"pkg_points_{i}")
+            label = request.form.get(f"pkg_label_{i}")
+            if not baht and not pts:
+                continue
+            try:
+                packages.append({
+                    "id": request.form.get(f"pkg_id_{i}") or f"p{int(float(baht))}",
+                    "baht": float(baht),
+                    "points": int(pts),
+                    "label": (label or f"{pts} พ้อยท์").strip(),
+                })
+            except (TypeError, ValueError):
+                continue
+        store.save_settings({
+            "points_topup_enabled": enabled,
+            "points_packages": packages or store.DEFAULT_POINTS_PACKAGES,
+        })
+        flash("บันทึกตั้งค่าพ้อยท์เรียบร้อยแล้ว")
+        return redirect(url_for("admin") + "#users")
+    if action == "points_adjust":
+        uid = request.form.get("user_id") or ""
+        try:
+            amount = int(request.form.get("amount") or 0)
+        except ValueError:
+            amount = 0
+        reason = (request.form.get("reason") or "").strip() or "ปรับโดยแอดมิน"
+        try:
+            u, entry = users.adjust_points(uid, amount, reason=reason, admin="admin", typ="admin")
+            flash(f"ปรับพ้อยท์ {u.get('email') or uid}: {amount:+d} → คงเหลือ {u.get('points')}")
+        except (KeyError, ValueError) as e:
+            flash(f"ปรับพ้อยท์ไม่สำเร็จ: {e}")
+        return redirect(url_for("admin", user_q=request.form.get("user_q") or "", user_id=uid) + "#users")
     if action == "upload_qr":
         f = request.files.get("qr_image")
         if not f or not f.filename:
@@ -664,11 +1063,18 @@ def admin():
     for j in allj:
         sid = j.get("service_id") or "lesson_plan"
         svc_stats[sid] = svc_stats.get(sid, 0) + 1
+    user_q = request.args.get("user_q") or ""
+    user_id = request.args.get("user_id") or ""
+    user_list = users.search_users(user_q)
+    selected_user = users.load_user(user_id) if user_id else None
+    pts_totals = users.points_totals()
     return render_template("admin.html", board=board, tpl=tpl, jobs=jobs, status_th=STATUS_TH,
                            pay_jobs=pay_jobs, pay_filter=pay_filter, settings=settings,
                            totals=totals, has_qr=has_qr, services=services,
                            svc_filter=svc_filter, svc_stats=svc_stats,
-                           unit_label=catalog.unit_label)
+                           unit_label=catalog.unit_label,
+                           user_list=user_list, selected_user=selected_user,
+                           user_q=user_q, pts_totals=pts_totals)
 
 
 @app.get("/admin/qr")

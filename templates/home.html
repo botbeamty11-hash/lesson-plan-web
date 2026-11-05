@@ -1,22 +1,77 @@
 {% extends "base.html" %}
-{% block title %}หน้าแรก — บริการครู{% endblock %}
+{% block title %}{{ meta.title }}{% endblock %}
+{% block jsonld %}
+<script type="application/ld+json">
+{{ {
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Organization",
+      "name": "ครูดี",
+      "url": site_url,
+      "logo": site_url + "/static/icons/icon-512.png",
+      "email": "hello@krudee.cc"
+    },
+    {
+      "@type": "WebSite",
+      "name": "ครูดี",
+      "url": site_url,
+      "inLanguage": "th",
+      "description": meta.description,
+      "potentialAction": {
+        "@type": "SearchAction",
+        "target": site_url + "/services",
+        "query-input": "required name=search_term_string"
+      }
+    }
+  ]
+}|tojson }}
+</script>
+{% endblock %}
 {% block content %}
-<div class="card home-hero">
-  <h1>เลือกบริการที่ต้องการ</h1>
-  <p class="sub">กดกลุ่มด้านล่างเพื่อดูบริการในกลุ่มนั้น — ส่งงานง่าย ๆ ไม่กี่ขั้นตอน</p>
-</div>
-<div class="group-grid">
-{% for group, services in groups %}
-  <a class="group-card" href="{{ url_for('group_page', group_name=group) }}">
-    <div class="gc-icon">{{ group_icons.get(group, '📦') }}</div>
-    <div class="gc-body">
-      <h2>{{ group }}</h2>
-      <p>{{ services|length }} บริการ</p>
+<section class="hero">
+  <div class="hero-copy">
+    <p class="eyebrow">บริการสำหรับครูไทย · krudee.cc</p>
+    <h1>ทำแผนการสอน สื่อ และเอกสารครู ได้ง่ายในไม่กี่คลิก</h1>
+    <p class="lead">ครูดีช่วยจัดทำ <strong>แผนการจัดการเรียนรู้</strong> สื่อการสอน ใบงาน ข้อสอบพร้อมเฉลย ว.PA SAR วิจัยในชั้นเรียน และแปลง PDF เป็น Word ภาษาไทย — ส่งงานออนไลน์ ติดตามสถานะได้</p>
+    <div class="hero-cta">
+      <a class="btn big" href="#groups">เลือกบริการ</a>
+      <a class="btn sec big" href="/plan">ทำแผนการสอน</a>
     </div>
-  </a>
-{% else %}
-  <div class="card"><p class="hint">ยังไม่มีบริการที่เปิดใช้งาน</p></div>
-{% endfor %}
-</div>
-<p class="hint center-hint"><a href="{{ url_for('track_lookup') }}">มีรหัสงานแล้ว? ติดตามสถานะที่นี่</a></p>
+    <ul class="trust">
+      <li>ฟอร์มตามโรงเรียนคุณ</li>
+      <li>ฟอนต์ไทย อ่านง่าย</li>
+      <li>ติดตามงานได้ทุกเมื่อ</li>
+    </ul>
+  </div>
+</section>
+
+<section class="how" aria-labelledby="how-title">
+  <h2 id="how-title">ใช้งาน 3 ขั้นตอน</h2>
+  <ol class="how-steps">
+    <li><span class="n">1</span><div><strong>เลือกบริการ</strong><p>แผนการสอน สื่อ ใบงาน หรือแปลงไฟล์</p></div></li>
+    <li><span class="n">2</span><div><strong>กรอก / อัปโหลด</strong><p>ใส่รายละเอียดสั้น ๆ หรือแนบไฟล์ต้นทาง</p></div></li>
+    <li><span class="n">3</span><div><strong>รับผลงาน</strong><p>ติดตามสถานะ แล้วดาวน์โหลดเมื่อเสร็จ</p></div></li>
+  </ol>
+</section>
+
+<section id="groups" class="groups-sec" aria-labelledby="groups-title">
+  <h2 id="groups-title">เลือกกลุ่มบริการ</h2>
+  <p class="sub">กดกลุ่มเพื่อดูรายการบริการสั้น ๆ — ไม่รก ไม่เยอะเกิน</p>
+  <div class="group-grid">
+  {% for group, services in groups %}
+    <a class="group-card" href="{{ url_for('group_page', group_name=group) }}">
+      <div class="gc-icon svg" aria-hidden="true">{{ group_svg.get(group, '')|safe }}</div>
+      <div class="gc-body">
+        <h3>{{ group }}</h3>
+        <p>{{ services|length }} บริการ</p>
+      </div>
+      <span class="svc-go" aria-hidden="true">→</span>
+    </a>
+  {% else %}
+    <div class="card"><p class="hint">ยังไม่มีบริการที่เปิดใช้งาน</p></div>
+  {% endfor %}
+  </div>
+  <p class="center-hint"><a href="{{ url_for('track_lookup') }}">มีรหัสงานแล้ว? ติดตามสถานะที่นี่</a></p>
+</section>
 {% endblock %}

@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}งานของฉัน | ครูดี{% endblock %}
+{% block content %}
+<div class="card">
+  <h1>งานของฉัน</h1>
+  <p class="sub">สวัสดี {{ user.name or user.email }} — คงเหลือ <b>{{ user.points|default(0) }}</b> พ้อยท์</p>
+  {% if jobs %}
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>รหัส</th><th>บริการ</th><th>สถานะ</th><th>เมื่อ</th><th></th></tr></thead>
+    <tbody>
+    {% for j in jobs %}
+      <tr>
+        <td class="mono"><a href="{{ url_for('job_page', job_id=j.id) }}">{{ j.id }}</a></td>
+        <td>{{ j.service_name or j.service_id }}</td>
+        <td><span class="badge b-{{ j.status }}">{{ status_th.get(j.status, j.status) }}</span></td>
+        <td>{{ j.created_at }}</td>
+        <td><a class="btn sm sec" href="{{ url_for('job_page', job_id=j.id) }}">ดู</a></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+    <p class="hint">ยังไม่มีงาน — <a href="/services">เริ่มเลือกบริการ</a></p>
+  {% endif %}
+</div>
+{% endblock %}

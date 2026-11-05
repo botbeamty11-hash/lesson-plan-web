@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% block title %}{{ meta.title if meta is defined else "ทำแผนการจัดการเรียนรู้ | ครูดี" }}{% endblock %}
 {% block content %}
 <form class="card" method="post" action="/submit" enctype="multipart/form-data" id="f" novalidate>
   <p class="crumb"><a href="/">หน้าแรก</a> · แผนการสอน</p>

@@ -1,24 +1,35 @@
 {% extends "base.html" %}
-{% block title %}{{ group }} — บริการครู{% endblock %}
+{% block title %}{{ meta.title }}{% endblock %}
+{% block jsonld %}
+<script type="application/ld+json">
+{{ {
+  "@context": "https://schema.org",
+  "@type": "BreadcrumbList",
+  "itemListElement": [
+    {"@type": "ListItem", "position": 1, "name": "หน้าแรก", "item": site_url + "/"},
+    {"@type": "ListItem", "position": 2, "name": "บริการทั้งหมด", "item": site_url + "/services"},
+    {"@type": "ListItem", "position": 3, "name": group, "item": site_url + "/group/" + group}
+  ]
+}|tojson }}
+</script>
+{% endblock %}
 {% block content %}
+<p class="crumb"><a href="/">หน้าแรก</a> · <a href="/services">บริการทั้งหมด</a> · {{ group }}</p>
 <div class="card">
-  <p class="crumb"><a href="/">หน้าแรก</a> · {{ group }}</p>
-  <h1><span class="gc-icon inline">{{ icon }}</span> {{ group }}</h1>
-  <p class="sub">เลือกบริการด้านล่าง</p>
+  <h1><span class="gc-icon inline svg" aria-hidden="true">{{ icon_svg|safe }}</span> {{ group }}</h1>
+  <p class="sub">เลือกบริการด้านล่าง แล้วกรอกเฉพาะช่องจำเป็น</p>
   <ul class="svc-list">
   {% for s in services %}
     <li>
-      <a href="{% if s.special_form %}{{ url_for('plan_form') }}{% else %}{{ url_for('service_form', service_id=s.id) }}{% endif %}">
-        <span class="svc-ico">{{ s.icon or '📄' }}</span>
+      <a href="{% if s.special_form %}/plan{% else %}{{ url_for('service_form', service_id=s.id) }}{% endif %}">
+        <span class="svc-ico" aria-hidden="true">{{ s.icon or "•" }}</span>
         <span class="svc-text">
-          <b>{{ s.name }}</b>
+          <strong>{{ s.name }}</strong>
           <span class="svc-desc">{{ s.description }}</span>
         </span>
-        <span class="svc-go">›</span>
+        <span class="svc-go" aria-hidden="true">→</span>
       </a>
     </li>
-  {% else %}
-    <li class="hint">ยังไม่มีบริการในกลุ่มนี้</li>
   {% endfor %}
   </ul>
 </div>

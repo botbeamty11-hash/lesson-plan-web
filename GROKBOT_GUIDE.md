@@ -269,3 +269,38 @@ Result goes to the user in this chat, in Thai: one short line per finished or fa
 | สิทธิ์ GitHub | `gh` CLI ที่ล็อกอินไว้บนเครื่อง (บัญชี botbeamty11-hash) |
 
 ใน backup มีเฉพาะ `.env.example` (ชื่อตัวแปร ไม่มีค่า) — **ห้ามใส่ค่าจริงลงในไฟล์ที่แชร์**
+
+---
+
+## Google Login + พ้อยท์ + SEO (รอบล่าสุด)
+
+### Env ใหม่
+- `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` — ถ้าขาด หน้า login แจ้งภาษาไทย ไม่ crash
+- `LP_TEST_LOGIN=1` — เปิด `/auth/test-login` สำหรับทดสอบเท่านั้น (ค่าเริ่มต้นปิด / 404)
+- `LP_COOKIE_SECURE` — ค่าเริ่มต้นเปิด Secure cookie; ตั้ง `0` เมื่อทดสอบ HTTP local
+
+### Google Cloud Console (สรุปภาษาไทย)
+1. Consent screen แบบ External ชื่อแอป「ครูดี」 โดเมน `krudee.cc` + `onrender.com`
+2. สร้าง OAuth Client แบบ **Web application**
+3. Authorized redirect URIs:
+   - `https://krudee.cc/auth/google/callback`
+   - `https://lesson-plan-web.onrender.com/auth/google/callback`
+4. ใส่ Client ID/Secret ใน Render env → รีสตาร์ท
+
+Callback สร้างจาก `request` host + `ProxyFix` เพื่อรองรับทั้ง custom domain และ onrender.com (HTTPS)
+
+### พฤติกรรมล็อกอิน
+- ทุกหน้าดูได้โดยไม่ล็อกอิน
+- POST ส่งฟอร์ม / งานของฉัน / เติมพ้อยท์ → ต้องล็อกอิน แล้วกลับหน้าที่ค้างไว้
+- เก็บผู้ใช้ใน `data/users/<id>.json` (google_sub, email, name, picture, points, ledger)
+- งานเก็บ `user_id` · หน้า `/my-jobs`
+- แอดมินยังเป็นรหัสผ่านแยก
+
+### พ้อยท์
+- Admin: ผู้ใช้ & พ้อยท์ (ค้นหา / ปรับยอด / ledger / totals)
+- `points_cost` ต่อบริการ (default 0 ทั้งแคตตาล็อก — ยังไม่เปิดเก็บ)
+- Top-up PromptPay ปิดด้วย `points_topup_enabled` (default false); อนุมัติสลิปแล้วเข้าพ้อยท์ งานเป็น `done`
+- Worker `payments` / `pay-ok` ใช้กับ top-up ได้ (approve_payment แยกทาง fulfil=topup)
+
+### แบรนด์
+- ชื่อ「ครูดี」/ krudee.cc · ธีม Sarabun · favicon/og/manifest/robots/sitemap/JSON-LD

@@ -1,16 +1,115 @@
 <!doctype html>
-<html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{% block title %}บริการครู — แผนและเอกสาร{% endblock %}</title>
-<link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=6"></head>
-<body><header><div class="in"><a class="brand" href="/"><span class="logo">📘</span>บริการครู</a>
-<nav>
-  <a href="/" {% if request.path == '/' %}class="on"{% endif %}>หน้าแรก</a>
-  <a href="/services" {% if request.path.startswith('/services') or request.path.startswith('/group') %}class="on"{% endif %}>บริการทั้งหมด</a>
-  <a href="/track" {% if request.path.startswith('/track') or request.path.startswith('/job') %}class="on"{% endif %}>ติดตามงาน</a>
-</nav></div></header>
-<main class="{% if request.path.startswith('/admin') %}main-wide{% endif %}">
-{% with msgs = get_flashed_messages() %}{% for m in msgs %}<div class="flash {% if 'เรียบร้อย' in m or 'เสร็จ' in m %}ok{% endif %}">{{ m }}</div>{% endfor %}{% endwith %}
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+{% set _meta = meta if meta is defined and meta else brand.page_meta() %}
+<title>{% block title %}{{ _meta.title }}{% endblock %}</title>
+<meta name="description" content="{% block meta_description %}{{ _meta.description }}{% endblock %}">
+<link rel="canonical" href="{% block canonical %}{{ _meta.canonical }}{% endblock %}">
+<meta name="theme-color" content="#2563eb">
+<meta property="og:type" content="{{ _meta.og_type }}">
+<meta property="og:site_name" content="{{ site_name }}">
+<meta property="og:locale" content="th_TH">
+<meta property="og:title" content="{{ self.title() }}">
+<meta property="og:description" content="{{ self.meta_description() }}">
+<meta property="og:url" content="{{ self.canonical() }}">
+<meta property="og:image" content="{{ _meta.og_image }}">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="{{ self.title() }}">
+<meta name="twitter:description" content="{{ self.meta_description() }}">
+<meta name="twitter:image" content="{{ _meta.og_image }}">
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/static/icons/favicon-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
+<link rel="manifest" href="/site.webmanifest">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=7">
+{% block head_extra %}{% endblock %}
+{% block jsonld %}{% endblock %}
+</head>
+<body>
+<a class="skip" href="#main">ข้ามไปเนื้อหา</a>
+<header class="site-header">
+  <div class="in">
+    <a class="brand" href="/" aria-label="ครูดี หน้าแรก">
+      <span class="logo" aria-hidden="true">{{ brand.LOGO_SVG|safe }}</span>
+      <span class="brand-text"><strong>ครูดี</strong><small>krudee.cc</small></span>
+    </a>
+    <nav aria-label="เมนูหลัก">
+      <a href="/" {% if request.path == '/' %}class="on" aria-current="page"{% endif %}>หน้าแรก</a>
+      <a href="/services" {% if request.path.startswith('/services') or request.path.startswith('/group') or request.path.startswith('/plan') %}class="on"{% endif %}>บริการทั้งหมด</a>
+      <a href="/track" {% if request.path.startswith('/track') %}class="on"{% endif %}>ติดตามงาน</a>
+      {% if current_user %}
+        <a href="{{ url_for('my_jobs') }}" {% if request.path.startswith('/my-jobs') %}class="on"{% endif %}>งานของฉัน</a>
+      {% endif %}
+    </nav>
+    <div class="hdr-user">
+      {% if current_user %}
+        <span class="pts" title="พ้อยท์คงเหลือ">{{ current_user.points|default(0) }} พ้อยท์</span>
+        {% if points_topup_enabled %}
+          <a class="pts-link" href="{{ url_for('points_topup') }}">เติม</a>
+        {% endif %}
+        <details class="user-menu">
+          <summary>
+            {% if current_user.picture %}
+              <img class="avatar" src="{{ current_user.picture }}" alt="" width="32" height="32" referrerpolicy="no-referrer">
+            {% else %}
+              <span class="avatar av-fallback" aria-hidden="true">{{ (current_user.name or 'ค')[0] }}</span>
+            {% endif %}
+            <span class="uname">{{ current_user.name or current_user.email }}</span>
+          </summary>
+          <div class="user-dd">
+            <div class="muted small">{{ current_user.email }}</div>
+            <a href="{{ url_for('my_jobs') }}">งานของฉัน</a>
+            {% if points_topup_enabled %}<a href="{{ url_for('points_topup') }}">เติมพ้อยท์</a>{% endif %}
+            <form method="post" action="{{ url_for('logout') }}"><button type="submit" class="linkish">ออกจากระบบ</button></form>
+          </div>
+        </details>
+      {% else %}
+        <a class="btn btn-sm login-btn" href="{{ url_for('login', next=request.path) }}">เข้าสู่ระบบ</a>
+      {% endif %}
+    </div>
+  </div>
+</header>
+<main id="main" class="{% if request.path.startswith('/admin') %}main-wide{% endif %}">
+{% with msgs = get_flashed_messages() %}
+  {% for m in msgs %}
+    <div class="flash {% if 'เรียบร้อย' in m or 'เสร็จ' in m or 'ยินดี' in m or 'อนุมัติ' in m %}ok{% elif 'ไม่พอ' in m or 'ไม่สำเร็จ' in m %}{% else %}{% endif %}">{{ m }}</div>
+  {% endfor %}
+{% endwith %}
 {% block content %}{% endblock %}
-</main><footer>บริการจัดทำแผนและเอกสารสำหรับครู</footer>
-{% block scripts %}{% endblock %}</body></html>
+</main>
+<footer class="site-footer">
+  <div class="foot-grid">
+    <div>
+      <div class="brand foot-brand"><span class="logo sm">{{ brand.LOGO_SVG|safe }}</span><strong>ครูดี</strong></div>
+      <p>บริการทำแผนการสอน สื่อการสอน ใบงาน ข้อสอบ และเอกสารครู — ใช้งานง่าย มืออาชีพ</p>
+    </div>
+    <div>
+      <h3>บริการ</h3>
+      <ul>
+        <li><a href="/plan">แผนการจัดการเรียนรู้</a></li>
+        <li><a href="/group/สื่อการสอน">สื่อการสอน / ใบงาน</a></li>
+        <li><a href="/group/แปลงและจัดการไฟล์">แปลง PDF เป็น Word</a></li>
+        <li><a href="/services">บริการทั้งหมด</a></li>
+      </ul>
+    </div>
+    <div>
+      <h3>ช่วยเหลือ</h3>
+      <ul>
+        <li><a href="/track">ติดตามงาน</a></li>
+        <li><a href="/login">เข้าสู่ระบบ</a></li>
+        <li><a href="mailto:hello@krudee.cc">ติดต่อ: hello@krudee.cc</a></li>
+      </ul>
+    </div>
+  </div>
+  <p class="copy">© <span id="y"></span> ครูดี · krudee.cc — สงวนลิขสิทธิ์</p>
+</footer>
+<script>document.getElementById('y').textContent=new Date().getFullYear()</script>
+{% block scripts %}{% endblock %}
+</body></html>

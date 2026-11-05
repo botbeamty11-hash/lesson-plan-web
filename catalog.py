@@ -56,7 +56,8 @@ DEFAULT_SERVICES = [
         "price": 10.0,
         "icon": "📘",
         "enabled": True,
-        "collect_payment": True,  # lesson-plan keeps PromptPay flow
+        "collect_payment": True,
+        "points_cost": 0,  # lesson-plan keeps PromptPay flow
         "fulfil": "worker",
         "special_form": True,  # uses existing /plan form
         "inputs": [],
@@ -78,6 +79,7 @@ DEFAULT_SERVICES = [
         "icon": "🖥️",
         "enabled": True,
         "collect_payment": False,
+        "points_cost": 0,
         "fulfil": "worker",
         "inputs": [
             {"id": "topic", "label": "หัวข้อ / เรื่อง", "type": "text", "required": True},
@@ -100,6 +102,7 @@ DEFAULT_SERVICES = [
         "icon": "📝",
         "enabled": True,
         "collect_payment": False,
+        "points_cost": 0,
         "fulfil": "worker",
         "inputs": [
             {"id": "topic", "label": "หัวข้อ / เรื่อง", "type": "text", "required": True},
@@ -124,6 +127,7 @@ DEFAULT_SERVICES = [
         "icon": "✍️",
         "enabled": True,
         "collect_payment": False,
+        "points_cost": 0,
         "fulfil": "worker",
         "inputs": [
             {"id": "topic", "label": "หัวข้อ / เรื่อง", "type": "text", "required": True},
@@ -148,6 +152,7 @@ DEFAULT_SERVICES = [
         "icon": "🎮",
         "enabled": True,
         "collect_payment": False,
+        "points_cost": 0,
         "fulfil": "worker",
         "inputs": [
             {"id": "topic", "label": "หัวข้อ / เรื่อง", "type": "text", "required": True},
@@ -171,6 +176,7 @@ DEFAULT_SERVICES = [
         "icon": "🏅",
         "enabled": True,
         "collect_payment": False,
+        "points_cost": 0,
         "fulfil": "worker",
         "inputs": [
             {"id": "kind", "label": "ประเภท", "type": "select", "required": True,
@@ -195,6 +201,7 @@ DEFAULT_SERVICES = [
         "icon": "📄",
         "enabled": True,
         "collect_payment": False,
+        "points_cost": 0,
         "fulfil": "worker",
         "inputs": [
             {"id": "pages", "label": "จำนวนหน้า (โดยประมาณ)", "type": "number", "required": True, "min": 1, "max": 200, "default": 1},
@@ -213,6 +220,7 @@ DEFAULT_SERVICES = [
         "icon": "🔍",
         "enabled": True,
         "collect_payment": False,
+        "points_cost": 0,
         "fulfil": "worker",
         "inputs": [
             {"id": "pages", "label": "จำนวนหน้า/รูป", "type": "number", "required": True, "min": 1, "max": 50, "default": 1},
@@ -234,6 +242,7 @@ DEFAULT_SERVICES = [
         "icon": "📐",
         "enabled": True,
         "collect_payment": False,
+        "points_cost": 0,
         "fulfil": "worker",
         "inputs": [
             {"id": "instructions", "label": "รายละเอียดที่ต้องการ", "type": "textarea", "required": False},
@@ -254,6 +263,7 @@ DEFAULT_SERVICES = [
         "icon": "🔗",
         "enabled": True,
         "collect_payment": False,
+        "points_cost": 0,
         "fulfil": "auto",
         "inputs": [
             {"id": "source", "label": "ไฟล์ PDF ที่ต้องการรวม (เลือกหลายไฟล์ ตามลำดับ)", "type": "files", "required": True,
@@ -271,6 +281,7 @@ DEFAULT_SERVICES = [
         "icon": "✂️",
         "enabled": True,
         "collect_payment": False,
+        "points_cost": 0,
         "fulfil": "auto",
         "inputs": [
             {"id": "source", "label": "ไฟล์ PDF", "type": "file", "required": True, "accept": [".pdf"]},
@@ -289,6 +300,7 @@ DEFAULT_SERVICES = [
         "icon": "📦",
         "enabled": True,
         "collect_payment": False,
+        "points_cost": 0,
         "fulfil": "auto",
         "inputs": [
             {"id": "source", "label": "ไฟล์ PDF", "type": "file", "required": True, "accept": [".pdf"]},
@@ -306,6 +318,7 @@ DEFAULT_SERVICES = [
         "icon": "📑",
         "enabled": True,
         "collect_payment": False,
+        "points_cost": 0,
         "fulfil": "worker",
         "inputs": [
             {"id": "school", "label": "โรงเรียน / สังกัด", "type": "text", "required": False},
@@ -328,6 +341,7 @@ DEFAULT_SERVICES = [
         "icon": "🤝",
         "enabled": True,
         "collect_payment": False,
+        "points_cost": 0,
         "fulfil": "worker",
         "inputs": [
             {"id": "teacher", "label": "ชื่อครู", "type": "text", "required": False},
@@ -350,6 +364,7 @@ DEFAULT_SERVICES = [
         "icon": "🔬",
         "enabled": True,
         "collect_payment": False,
+        "points_cost": 0,
         "fulfil": "worker",
         "inputs": [
             {"id": "topic", "label": "หัวข้อวิจัย", "type": "text", "required": True},
@@ -371,6 +386,7 @@ DEFAULT_SERVICES = [
         "icon": "✉️",
         "enabled": True,
         "collect_payment": False,
+        "points_cost": 0,
         "fulfil": "worker",
         "inputs": [
             {"id": "kind", "label": "ประเภท", "type": "select", "required": True,
@@ -394,6 +410,7 @@ DEFAULT_SERVICES = [
         "icon": "📌",
         "enabled": True,
         "collect_payment": False,
+        "points_cost": 0,
         "fulfil": "worker",
         "inputs": [
             {"id": "title", "label": "ชื่อโครงการ / กิจกรรม", "type": "text", "required": True},
@@ -416,6 +433,7 @@ DEFAULT_SERVICES = [
         "icon": "✅",
         "enabled": True,
         "collect_payment": False,
+        "points_cost": 0,
         "fulfil": "worker",
         "inputs": [
             {"id": "subject", "label": "วิชา", "type": "text", "required": True},
@@ -441,6 +459,7 @@ DEFAULT_SERVICES = [
         "icon": "🧮",
         "enabled": True,
         "collect_payment": False,
+        "points_cost": 0,
         "fulfil": "worker",
         "inputs": [
             {"id": "item_count", "label": "จำนวนข้อ", "type": "number", "required": True, "min": 1, "max": 100, "default": 20},
@@ -462,6 +481,7 @@ DEFAULT_SERVICES = [
         "icon": "📊",
         "enabled": True,
         "collect_payment": False,
+        "points_cost": 0,
         "fulfil": "worker",
         "inputs": [
             {"id": "subject", "label": "วิชา / รายวิชา", "type": "text", "required": False},
@@ -483,6 +503,7 @@ DEFAULT_SERVICES = [
         "icon": "💌",
         "enabled": True,
         "collect_payment": False,
+        "points_cost": 0,
         "fulfil": "worker",
         "inputs": [
             {"id": "purpose", "label": "วัตถุประสงค์", "type": "text", "required": True,
@@ -504,6 +525,7 @@ DEFAULT_SERVICES = [
         "icon": "📋",
         "enabled": True,
         "collect_payment": False,
+        "points_cost": 0,
         "fulfil": "worker",
         "inputs": [
             {"id": "topic", "label": "หัวข้อแบบสอบถาม", "type": "text", "required": True},
@@ -558,6 +580,11 @@ def all_services(include_disabled=False):
             item["enabled"] = bool(ov["enabled"])
         if "collect_payment" in ov:
             item["collect_payment"] = bool(ov["collect_payment"])
+        if "points_cost" in ov:
+            try:
+                item["points_cost"] = max(0, int(ov["points_cost"]))
+            except (TypeError, ValueError):
+                pass
         if "name" in ov and ov["name"]:
             item["name"] = str(ov["name"])
         if include_disabled or item.get("enabled", True):
@@ -606,6 +633,11 @@ def save_service_overrides(updates):
             base["enabled"] = bool(patch["enabled"])
         if "collect_payment" in patch:
             base["collect_payment"] = bool(patch["collect_payment"])
+        if "points_cost" in patch:
+            try:
+                base["points_cost"] = max(0, int(patch["points_cost"]))
+            except (TypeError, ValueError):
+                pass
         if "name" in patch and patch["name"]:
             base["name"] = str(patch["name"])
         base["id"] = sid
