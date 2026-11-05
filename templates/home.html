@@ -44,8 +44,9 @@
     "งานวัดผลและผู้ปกครอง": "วัดผล/ผู้ปกครอง"
   } %}
   {% for group, services in groups %}
-    <a class="tile" href="{{ url_for('group_page', group_name=group) }}">
-      <span class="tile-icon" aria-hidden="true">{{ group_svg.get(group, '')|safe }}</span>
+    {% set ikey = brand.group_img_key(group) %}
+    <a class="tile tint-{{ ikey }}" href="{{ url_for('group_page', group_name=group) }}">
+      <span class="tile-icon img" aria-hidden="true">{{ brand.group_img_html(group, 'gimg', 72)|safe }}</span>
       <span class="tile-label">{{ short.get(group, group) }}</span>
       <span class="tile-meta">{{ services|length }} บริการ</span>
     </a>
@@ -53,7 +54,12 @@
     <div class="card"><p class="hint">ยังไม่มีบริการที่เปิดใช้งาน</p></div>
   {% endfor %}
   </div>
-  <p class="home-track"><a class="btn sec" href="{{ url_for('track_lookup') }}">มีรหัสงาน? ติดตามงาน</a></p>
+  <p class="home-track">
+    <a class="btn sec track-cta" href="{{ url_for('track_lookup') }}">
+      <span class="track-cta-ic" aria-hidden="true">{{ brand.group_img_html('track', 'gimg', 36)|safe }}</span>
+      มีรหัสงาน? ติดตามงาน
+    </a>
+  </p>
 </section>
 
 <section class="home-more" aria-labelledby="more-title">

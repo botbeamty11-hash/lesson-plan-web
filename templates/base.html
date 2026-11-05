@@ -29,7 +29,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=9">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=10">
 {% block head_extra %}{% endblock %}
 {% block jsonld %}{% endblock %}
 </head>
@@ -85,7 +85,7 @@
     <span class="tab-ic" aria-hidden="true">📋</span><span>บริการ</span>
   </a>
   <a href="/track" {% if request.path.startswith('/track') %}class="on"{% endif %}>
-    <span class="tab-ic" aria-hidden="true">🔎</span><span>ติดตามงาน</span>
+    <span class="tab-ic tab-img" aria-hidden="true"><img src="/static/icons/groups/track.webp" width="28" height="28" alt=""></span><span>ติดตามงาน</span>
   </a>
   {% if current_user %}
   <a href="{{ url_for('my_jobs') }}" {% if request.path.startswith('/my-jobs') %}class="on"{% endif %}>

@@ -14,9 +14,13 @@
 </script>
 {% endblock %}
 {% block content %}
+{% set ikey = brand.group_img_key(group) %}
 <p class="crumb"><a href="/">หน้าแรก</a> · <a href="/services">บริการทั้งหมด</a> · {{ group }}</p>
-<div class="card">
-  <h1><span class="gc-icon inline svg" aria-hidden="true">{{ icon_svg|safe }}</span> {{ group }}</h1>
+<div class="card tint-{{ ikey }}">
+  <h1 class="group-head">
+    <span class="gc-icon img" aria-hidden="true">{{ brand.group_img_html(group, 'gimg', 56)|safe }}</span>
+    {{ group }}
+  </h1>
   <p class="sub">เลือกบริการด้านล่าง แล้วกรอกเฉพาะช่องจำเป็น</p>
   <ul class="svc-list">
   {% for s in services %}

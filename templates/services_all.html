@@ -6,8 +6,12 @@
   <p class="sub">แผนการจัดการเรียนรู้ สื่อการสอน ใบงาน ข้อสอบ ว.PA SAR วิจัยในชั้นเรียน และแปลงไฟล์ภาษาไทย</p>
 </div>
 {% for group, services in groups %}
-<div class="card">
-  <h2><span class="gc-icon inline svg" aria-hidden="true">{{ group_svg.get(group,'')|safe }}</span> {{ group }}</h2>
+{% set ikey = brand.group_img_key(group) %}
+<div class="card group-card-head tint-{{ ikey }}">
+  <h2 class="group-head">
+    <span class="gc-icon img" aria-hidden="true">{{ brand.group_img_html(group, 'gimg', 48)|safe }}</span>
+    {{ group }}
+  </h2>
   <ul class="svc-list">
   {% for s in services %}
     <li>
