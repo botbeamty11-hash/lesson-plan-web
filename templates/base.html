@@ -7,7 +7,7 @@
 <title>{% block title %}{{ _meta.title }}{% endblock %}</title>
 <meta name="description" content="{% block meta_description %}{{ _meta.description }}{% endblock %}">
 <link rel="canonical" href="{% block canonical %}{{ _meta.canonical }}{% endblock %}">
-<meta name="theme-color" content="#2563eb">
+<meta name="theme-color" content="#22A386">
 <meta property="og:type" content="{{ _meta.og_type }}">
 <meta property="og:site_name" content="{{ site_name }}">
 <meta property="og:locale" content="th_TH">
@@ -21,6 +21,7 @@
 <meta name="twitter:title" content="{{ self.title() }}">
 <meta name="twitter:description" content="{{ self.meta_description() }}">
 <meta name="twitter:image" content="{{ _meta.og_image }}">
+<link rel="icon" href="/static/favicon.ico" sizes="any">
 <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
 <link rel="icon" href="/static/icons/favicon-32.png" sizes="32x32" type="image/png">
 <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
@@ -28,7 +29,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=8">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=9">
 {% block head_extra %}{% endblock %}
 {% block jsonld %}{% endblock %}
 </head>
@@ -40,7 +41,7 @@
       <span class="logo" aria-hidden="true">{{ brand.LOGO_SVG|safe }}</span>
       <span class="brand-text"><strong>ครูดี</strong><small>krudee.cc</small></span>
     </a>
-    <nav aria-label="เมนูหลัก">
+    <nav class="nav-desktop" aria-label="เมนูหลัก">
       <a href="/" {% if request.path == '/' %}class="on" aria-current="page"{% endif %}>หน้าแรก</a>
       <a href="/services" {% if request.path.startswith('/services') or request.path.startswith('/group') or request.path.startswith('/plan') %}class="on"{% endif %}>บริการทั้งหมด</a>
       <a href="/track" {% if request.path.startswith('/track') %}class="on"{% endif %}>ติดตามงาน</a>
@@ -76,6 +77,22 @@
     </div>
   </div>
 </header>
+<nav class="nav-tabs" aria-label="เมนูมือถือ">
+  <a href="/" {% if request.path == '/' %}class="on" aria-current="page"{% endif %}>
+    <span class="tab-ic" aria-hidden="true">🏠</span><span>หน้าแรก</span>
+  </a>
+  <a href="/services" {% if request.path.startswith('/services') or request.path.startswith('/group') or request.path.startswith('/plan') %}class="on"{% endif %}>
+    <span class="tab-ic" aria-hidden="true">📋</span><span>บริการ</span>
+  </a>
+  <a href="/track" {% if request.path.startswith('/track') %}class="on"{% endif %}>
+    <span class="tab-ic" aria-hidden="true">🔎</span><span>ติดตามงาน</span>
+  </a>
+  {% if current_user %}
+  <a href="{{ url_for('my_jobs') }}" {% if request.path.startswith('/my-jobs') %}class="on"{% endif %}>
+    <span class="tab-ic" aria-hidden="true">📁</span><span>งานของฉัน</span>
+  </a>
+  {% endif %}
+</nav>
 <main id="main" class="{% if request.path.startswith('/admin') %}main-wide{% endif %}">
 {% with msgs = get_flashed_messages() %}
   {% for m in msgs %}
