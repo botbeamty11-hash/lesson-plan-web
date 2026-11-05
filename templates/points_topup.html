@@ -3,12 +3,23 @@
 {% block content %}
 <div class="card">
   <h1>เติมพ้อยท์</h1>
-  <p class="sub">คงเหลือตอนนี้ <b>{{ user.points|default(0) }}</b> พ้อยท์ — โอน PromptPay ตามยอดแพ็ก แล้วอัปโหลดสลิป</p>
+  <p class="sub">คงเหลือตอนนี้ <b>{{ user.points|default(0) }}</b> พ้อยท์</p>
+  {% if not (settings.promptpay_id or settings.qr_image) %}
+  <div class="flash">ระบบชำระเงินกำลังเตรียม — โปรดลองใหม่ภายหลัง หรือติดต่อ <a href="mailto:hello@krudee.cc">hello@krudee.cc</a></div>
+  <p class="hint">แพ็กเกจที่เตรียมไว้:</p>
+  <ul class="pkg-preview">
+    {% for p in packages %}
+    <li><b>{{ p.points }} พ้อยท์</b> — {{ '%.0f'|format(p.baht) }} บาท · {{ p.label }}</li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="sub">โอน PromptPay ตามยอดแพ็ก แล้วอัปโหลดสลิป</p>
   <form method="post" class="pkg-grid">
     {% for p in packages %}
-    <label class="pkg-card">
+    <label class="pkg-card {% if p.id == 'p200' %}best{% endif %}">
       <input type="radio" name="package_id" value="{{ p.id }}" {% if loop.first %}required{% endif %}>
       <div class="pkg-body">
+        {% if p.id == 'p200' %}<span class="promo-tag">คุ้มสุด</span>{% endif %}
         <div class="pkg-pts">{{ p.points }} พ้อยท์</div>
         <div class="pkg-baht">{{ '%.0f'|format(p.baht) }} บาท</div>
         <div class="hint">{{ p.label }}</div>
@@ -17,5 +28,6 @@
     {% endfor %}
     <div class="actions full"><button class="btn big" type="submit">ไปชำระเงิน</button></div>
   </form>
+  {% endif %}
 </div>
 {% endblock %}

@@ -83,8 +83,7 @@ def save(job):
 
 DEFAULT_POINTS_PACKAGES = [
     {"id": "p100", "baht": 100, "points": 100, "label": "100 พ้อยท์"},
-    {"id": "p300", "baht": 300, "points": 330, "label": "330 พ้อยท์ (โบนัส 30)"},
-    {"id": "p500", "baht": 500, "points": 600, "label": "600 พ้อยท์ (โบนัส 100)"},
+    {"id": "p200", "baht": 200, "points": 220, "label": "220 พ้อยท์ (โบนัส +20) · คุ้มกว่า"},
 ]
 
 
@@ -97,6 +96,8 @@ def default_settings():
         "qr_decoded_id": None,
         "points_topup_enabled": False,
         "points_packages": list(DEFAULT_POINTS_PACKAGES),
+        # Owner toggle: 1 free use per Google account + promo top-up popup. DEFAULT OFF.
+        "free_trial_mode": False,
     }
 
 
@@ -109,7 +110,8 @@ def load_settings():
             if isinstance(data, dict):
                 s.update({k: data[k] for k in ("price_per_plan", "payee_name", "promptpay_id",
                                                "qr_image", "qr_decoded_id",
-                                               "points_topup_enabled", "points_packages") if k in data})
+                                               "points_topup_enabled", "points_packages",
+                                               "free_trial_mode") if k in data})
         except Exception:
             pass
     try:
@@ -119,6 +121,7 @@ def load_settings():
     s["payee_name"] = (s.get("payee_name") or DEFAULT_PAYEE_NAME).strip() or DEFAULT_PAYEE_NAME
     s["promptpay_id"] = (s.get("promptpay_id") or "").strip()
     s["points_topup_enabled"] = bool(s.get("points_topup_enabled"))
+    s["free_trial_mode"] = bool(s.get("free_trial_mode"))
     pkgs = s.get("points_packages")
     if not isinstance(pkgs, list) or not pkgs:
         s["points_packages"] = list(DEFAULT_POINTS_PACKAGES)
@@ -167,6 +170,8 @@ def save_settings(updates):
             s["qr_decoded_id"] = updates["qr_decoded_id"]
         if "points_topup_enabled" in updates:
             s["points_topup_enabled"] = bool(updates["points_topup_enabled"])
+        if "free_trial_mode" in updates:
+            s["free_trial_mode"] = bool(updates["free_trial_mode"])
         if "points_packages" in updates and isinstance(updates["points_packages"], list):
             s["points_packages"] = updates["points_packages"]
         tmp = SETTINGS_PATH + ".tmp"
@@ -812,6 +817,23 @@ def set_plan_choice(job_id, mode, selected=None):
             pass
         _init_payment(j)
         j["status"] = "awaiting_payment"
+        save(j)
+        return j
+
+
+def mark_job_points_paid(job_id, points_spent=0):
+    """Skip PromptPay: mark a lesson-plan (or paid) job as points-settled and queued."""
+    with lock():
+        j = load(job_id)
+        if not j:
+            raise KeyError(job_id)
+        j["points_spent"] = int(points_spent or 0)
+        j["collect_payment"] = False
+        j["payment"] = None
+        if j.get("status") in ("awaiting_payment", "payment_rejected", "payment_review", "awaiting_choice"):
+            j["status"] = "queued"
+        elif j.get("status") not in ("queued", "processing", "done", "error", "cancelled"):
+            j["status"] = "queued"
         save(j)
         return j
 

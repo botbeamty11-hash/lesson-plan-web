@@ -57,7 +57,7 @@ DEFAULT_SERVICES = [
         "icon": "📘",
         "enabled": True,
         "collect_payment": True,
-        "points_cost": 0,  # lesson-plan keeps PromptPay flow
+        "points_cost": 8,  # per-plan base (5–12 via lesson_plan_points_cost)
         "fulfil": "worker",
         "special_form": True,  # uses existing /plan form
         "inputs": [],
@@ -79,7 +79,7 @@ DEFAULT_SERVICES = [
         "icon": "🖥️",
         "enabled": True,
         "collect_payment": False,
-        "points_cost": 0,
+        "points_cost": 12,
         "fulfil": "worker",
         "inputs": [
             {"id": "topic", "label": "หัวข้อ / เรื่อง", "type": "text", "required": True},
@@ -102,7 +102,7 @@ DEFAULT_SERVICES = [
         "icon": "📝",
         "enabled": True,
         "collect_payment": False,
-        "points_cost": 0,
+        "points_cost": 10,
         "fulfil": "worker",
         "inputs": [
             {"id": "topic", "label": "หัวข้อ / เรื่อง", "type": "text", "required": True},
@@ -127,7 +127,7 @@ DEFAULT_SERVICES = [
         "icon": "✍️",
         "enabled": True,
         "collect_payment": False,
-        "points_cost": 0,
+        "points_cost": 12,
         "fulfil": "worker",
         "inputs": [
             {"id": "topic", "label": "หัวข้อ / เรื่อง", "type": "text", "required": True},
@@ -152,7 +152,7 @@ DEFAULT_SERVICES = [
         "icon": "🎮",
         "enabled": True,
         "collect_payment": False,
-        "points_cost": 0,
+        "points_cost": 10,
         "fulfil": "worker",
         "inputs": [
             {"id": "topic", "label": "หัวข้อ / เรื่อง", "type": "text", "required": True},
@@ -176,7 +176,7 @@ DEFAULT_SERVICES = [
         "icon": "🏅",
         "enabled": True,
         "collect_payment": False,
-        "points_cost": 0,
+        "points_cost": 8,
         "fulfil": "worker",
         "inputs": [
             {"id": "kind", "label": "ประเภท", "type": "select", "required": True,
@@ -201,7 +201,7 @@ DEFAULT_SERVICES = [
         "icon": "📄",
         "enabled": True,
         "collect_payment": False,
-        "points_cost": 0,
+        "points_cost": 4,
         "fulfil": "worker",
         "inputs": [
             {"id": "pages", "label": "จำนวนหน้า (โดยประมาณ)", "type": "number", "required": True, "min": 1, "max": 200, "default": 1},
@@ -220,7 +220,7 @@ DEFAULT_SERVICES = [
         "icon": "🔍",
         "enabled": True,
         "collect_payment": False,
-        "points_cost": 0,
+        "points_cost": 5,
         "fulfil": "worker",
         "inputs": [
             {"id": "pages", "label": "จำนวนหน้า/รูป", "type": "number", "required": True, "min": 1, "max": 50, "default": 1},
@@ -242,7 +242,7 @@ DEFAULT_SERVICES = [
         "icon": "📐",
         "enabled": True,
         "collect_payment": False,
-        "points_cost": 0,
+        "points_cost": 5,
         "fulfil": "worker",
         "inputs": [
             {"id": "instructions", "label": "รายละเอียดที่ต้องการ", "type": "textarea", "required": False},
@@ -263,7 +263,7 @@ DEFAULT_SERVICES = [
         "icon": "🔗",
         "enabled": True,
         "collect_payment": False,
-        "points_cost": 0,
+        "points_cost": 1,
         "fulfil": "auto",
         "inputs": [
             {"id": "source", "label": "ไฟล์ PDF ที่ต้องการรวม (เลือกหลายไฟล์ ตามลำดับ)", "type": "files", "required": True,
@@ -281,7 +281,7 @@ DEFAULT_SERVICES = [
         "icon": "✂️",
         "enabled": True,
         "collect_payment": False,
-        "points_cost": 0,
+        "points_cost": 1,
         "fulfil": "auto",
         "inputs": [
             {"id": "source", "label": "ไฟล์ PDF", "type": "file", "required": True, "accept": [".pdf"]},
@@ -300,7 +300,7 @@ DEFAULT_SERVICES = [
         "icon": "📦",
         "enabled": True,
         "collect_payment": False,
-        "points_cost": 0,
+        "points_cost": 1,
         "fulfil": "auto",
         "inputs": [
             {"id": "source", "label": "ไฟล์ PDF", "type": "file", "required": True, "accept": [".pdf"]},
@@ -318,7 +318,7 @@ DEFAULT_SERVICES = [
         "icon": "📑",
         "enabled": True,
         "collect_payment": False,
-        "points_cost": 0,
+        "points_cost": 25,
         "fulfil": "worker",
         "inputs": [
             {"id": "school", "label": "โรงเรียน / สังกัด", "type": "text", "required": False},
@@ -341,7 +341,7 @@ DEFAULT_SERVICES = [
         "icon": "🤝",
         "enabled": True,
         "collect_payment": False,
-        "points_cost": 0,
+        "points_cost": 25,
         "fulfil": "worker",
         "inputs": [
             {"id": "teacher", "label": "ชื่อครู", "type": "text", "required": False},
@@ -364,7 +364,7 @@ DEFAULT_SERVICES = [
         "icon": "🔬",
         "enabled": True,
         "collect_payment": False,
-        "points_cost": 0,
+        "points_cost": 30,
         "fulfil": "worker",
         "inputs": [
             {"id": "topic", "label": "หัวข้อวิจัย", "type": "text", "required": True},
@@ -386,7 +386,7 @@ DEFAULT_SERVICES = [
         "icon": "✉️",
         "enabled": True,
         "collect_payment": False,
-        "points_cost": 0,
+        "points_cost": 8,
         "fulfil": "worker",
         "inputs": [
             {"id": "kind", "label": "ประเภท", "type": "select", "required": True,
@@ -410,7 +410,7 @@ DEFAULT_SERVICES = [
         "icon": "📌",
         "enabled": True,
         "collect_payment": False,
-        "points_cost": 0,
+        "points_cost": 20,
         "fulfil": "worker",
         "inputs": [
             {"id": "title", "label": "ชื่อโครงการ / กิจกรรม", "type": "text", "required": True},
@@ -433,7 +433,7 @@ DEFAULT_SERVICES = [
         "icon": "✅",
         "enabled": True,
         "collect_payment": False,
-        "points_cost": 0,
+        "points_cost": 15,
         "fulfil": "worker",
         "inputs": [
             {"id": "subject", "label": "วิชา", "type": "text", "required": True},
@@ -459,7 +459,7 @@ DEFAULT_SERVICES = [
         "icon": "🧮",
         "enabled": True,
         "collect_payment": False,
-        "points_cost": 0,
+        "points_cost": 12,
         "fulfil": "worker",
         "inputs": [
             {"id": "item_count", "label": "จำนวนข้อ", "type": "number", "required": True, "min": 1, "max": 100, "default": 20},
@@ -481,7 +481,7 @@ DEFAULT_SERVICES = [
         "icon": "📊",
         "enabled": True,
         "collect_payment": False,
-        "points_cost": 0,
+        "points_cost": 10,
         "fulfil": "worker",
         "inputs": [
             {"id": "subject", "label": "วิชา / รายวิชา", "type": "text", "required": False},
@@ -503,7 +503,7 @@ DEFAULT_SERVICES = [
         "icon": "💌",
         "enabled": True,
         "collect_payment": False,
-        "points_cost": 0,
+        "points_cost": 6,
         "fulfil": "worker",
         "inputs": [
             {"id": "purpose", "label": "วัตถุประสงค์", "type": "text", "required": True,
@@ -525,7 +525,7 @@ DEFAULT_SERVICES = [
         "icon": "📋",
         "enabled": True,
         "collect_payment": False,
-        "points_cost": 0,
+        "points_cost": 12,
         "fulfil": "worker",
         "inputs": [
             {"id": "topic", "label": "หัวข้อแบบสอบถาม", "type": "text", "required": True},
@@ -655,6 +655,50 @@ def save_service_overrides(updates):
         json.dump(payload, f, ensure_ascii=False, indent=2)
     os.replace(tmp, path)
     return all_services(include_disabled=True)
+
+
+
+# Addon points (flat, not × plan_count) when free-trial charging is on
+ADDON_POINTS = {
+    "addon_slides": 10,
+    "addon_worksheet": 8,
+    "addon_test": 10,
+}
+
+
+def lesson_plan_points_cost(service=None, plan_count=1, options=None, addons=None):
+    """Points for a lesson-plan order. 1 point ≈ 1 THB.
+
+    Per-plan rate is 5–12:
+      - 5  short/simple (no options, no addons)
+      - 8  standard (service.points_cost default)
+      - 12 detailed (illustrations option or 2+ addons)
+    Multiplied by plan_count; addons add a flat amount on top.
+    """
+    service = service or {}
+    base = int(service.get("points_cost") or 8)
+    opts = list(options or [])
+    ads_raw = list(addons or [])
+    ads = []
+    for a in ads_raw:
+        if isinstance(a, str):
+            ads.append(a)
+        elif isinstance(a, dict) and a.get("id"):
+            ads.append(a["id"])
+    detailed = ("ทำภาพประกอบเพิ่ม" in opts) or (len(ads) >= 2)
+    simple = (not opts) and (not ads)
+    if detailed:
+        per = 12
+    elif simple:
+        per = 5
+    else:
+        per = max(5, min(12, base))
+    try:
+        n = max(1, int(plan_count or 1))
+    except (TypeError, ValueError):
+        n = 1
+    extra = sum(ADDON_POINTS.get(aid, 8) for aid in ads)
+    return per * n + extra
 
 
 def unit_label(unit):

@@ -33,7 +33,7 @@
   <p class="crumb"><a href="/">หน้าแรก</a> · <a href="{{ url_for('group_page', group_name=service.group) }}">{{ service.group }}</a> · {{ service.name }}</p>
   <h1>{{ service.icon or '📄' }} {{ service.name }}</h1>
   <p class="sub">{{ service.description }}</p>
-  {% if service.points_cost and service.points_cost > 0 %}<div class="price-note">ใช้ {{ service.points_cost }} พ้อยท์ต่องาน</div>{% endif %}
+  {% if free_trial_mode and service.points_cost and service.points_cost > 0 %}<div class="price-note pts-cost">{{ service.points_cost }} พ้อยท์</div>{% endif %}
 {% if show_price %}
   <p class="price-note">ราคา {{ '%.0f'|format(service.price) }} บาท {{ unit_label(service.unit) }}</p>
   {% endif %}

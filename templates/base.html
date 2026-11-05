@@ -29,7 +29,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=12">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=13">
 {% block head_extra %}{% endblock %}
 {% block jsonld %}{% endblock %}
 </head>
@@ -51,8 +51,16 @@
     </nav>
     <div class="hdr-user">
       {% if current_user %}
-        <span class="pts" title="พ้อยท์คงเหลือ">{{ current_user.points|default(0) }} พ้อยท์</span>
-        {% if points_topup_enabled %}
+        {% if free_trial_mode %}
+          {% if free_uses_left is not none and free_uses_left > 0 %}
+            <span class="pts free-left" title="สิทธิ์ทดลองฟรีคงเหลือ">ฟรีเหลือ {{ free_uses_left }}</span>
+          {% endif %}
+          <span class="pts" title="พ้อยท์คงเหลือ">{{ current_user.points|default(0) }} พ้อยท์</span>
+          {% if points_topup_enabled %}
+            <a class="pts-link" href="{{ url_for('points_topup') }}">เติม</a>
+          {% endif %}
+        {% elif points_topup_enabled %}
+          <span class="pts" title="พ้อยท์คงเหลือ">{{ current_user.points|default(0) }} พ้อยท์</span>
           <a class="pts-link" href="{{ url_for('points_topup') }}">เติม</a>
         {% endif %}
         <details class="user-menu">
@@ -131,4 +139,50 @@
 </footer>
 <script>document.getElementById('y').textContent=new Date().getFullYear()</script>
 {% block scripts %}{% endblock %}
+
+{% if free_trial_mode and show_promo_popup and promo_packages %}
+<div class="promo-overlay" id="promo-overlay" role="dialog" aria-modal="true" aria-labelledby="promo-title">
+  <div class="promo-modal">
+    <button type="button" class="promo-x" id="promo-close" aria-label="ปิด">×</button>
+    <div class="promo-badge">โปรโมชันพิเศษ</div>
+    <h2 id="promo-title">เติมพ้อยท์ ใช้บริการครูดีต่อได้เลย</h2>
+    <p class="promo-sub">ใช้สิทธิ์ทดลองฟรีครบแล้ว — เติมพ้อยท์ครั้งนี้รับโบนัส</p>
+    <div class="promo-pkgs">
+      {% for p in promo_packages %}
+      <div class="promo-pkg {% if p.id == promo_best_id %}best{% endif %}">
+        {% if p.id == promo_best_id %}<span class="promo-tag">คุ้มสุด</span>{% endif %}
+        <div class="promo-pts">{{ p.points }} พ้อยท์</div>
+        <div class="promo-baht">{{ '%.0f'|format(p.baht) }} บาท</div>
+        <div class="promo-label">{{ p.label }}</div>
+      </div>
+      {% endfor %}
+    </div>
+    <div class="promo-actions">
+      {% if points_topup_enabled %}
+      <a class="btn big promo-cta" href="{{ url_for('points_topup') }}">ไปเติมพ้อยท์</a>
+      {% else %}
+      <a class="btn big promo-cta" href="mailto:hello@krudee.cc">ติดต่อเติมพ้อยท์</a>
+      {% endif %}
+      <form method="post" action="{{ url_for('promo_dismiss') }}" id="promo-dismiss-form">
+        <input type="hidden" name="next" value="{{ request.path }}">
+        <button type="submit" class="promo-later">ไว้ทีหลัง</button>
+      </form>
+    </div>
+  </div>
+</div>
+<script>
+(function(){
+  var ov=document.getElementById('promo-overlay');
+  if(!ov) return;
+  function dismiss(){
+    var f=document.getElementById('promo-dismiss-form');
+    if(f){ try{ fetch(f.action,{method:'POST',headers:{'X-Requested-With':'fetch'},body:new FormData(f)});}catch(e){} }
+    ov.remove();
+  }
+  var x=document.getElementById('promo-close');
+  if(x) x.addEventListener('click',dismiss);
+  ov.addEventListener('click',function(e){ if(e.target===ov) dismiss(); });
+})();
+</script>
+{% endif %}
 </body></html>

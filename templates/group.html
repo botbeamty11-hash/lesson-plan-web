@@ -30,6 +30,9 @@
         <span class="svc-text">
           <strong>{{ s.name }}</strong>
           <span class="svc-desc">{{ s.description }}</span>
+          {% if free_trial_mode and s.points_cost and s.points_cost > 0 %}
+            <span class="svc-pts">{{ s.points_cost }} พ้อยท์{% if s.unit == 'per_plan' %} / แผน{% endif %}</span>
+          {% endif %}
         </span>
         <span class="svc-go" aria-hidden="true">→</span>
       </a>

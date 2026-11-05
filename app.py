@@ -174,10 +174,38 @@ def _public_url(path="/"):
 @app.context_processor
 def inject_globals():
     u = current_user()
+    settings = store.load_settings()
+    free_mode = bool(settings.get("free_trial_mode"))
+    show_promo = False
+    if free_mode and u:
+        if session.get("show_promo_popup"):
+            show_promo = True
+        elif users.free_uses_left(u) <= 0 and not session.get("promo_dismissed") and not session.get("promo_ambient_shown"):
+            # at most once per session for returning users with no free credit
+            session["promo_ambient_shown"] = True
+            session["show_promo_popup"] = True
+            show_promo = True
+    pkgs = list(settings.get("points_packages") or [])
+    # highlight best bonus package for popup
+    best_id = None
+    best_bonus = -1
+    for pkg in pkgs:
+        try:
+            bonus = int(pkg.get("points") or 0) - int(float(pkg.get("baht") or 0))
+        except (TypeError, ValueError):
+            bonus = 0
+        if bonus > best_bonus:
+            best_bonus = bonus
+            best_id = pkg.get("id")
     return {
         "current_user": u,
         "google_oauth_ready": bool(_oauth),
-        "points_topup_enabled": bool(store.load_settings().get("points_topup_enabled")),
+        "points_topup_enabled": bool(settings.get("points_topup_enabled")),
+        "free_trial_mode": free_mode,
+        "free_uses_left": users.free_uses_left(u) if (free_mode and u) else None,
+        "show_promo_popup": show_promo,
+        "promo_packages": pkgs if free_mode else [],
+        "promo_best_id": best_id,
         "brand": brand,
         "site_name": brand.SITE_NAME,
         "site_url": brand.SITE_URL,
@@ -262,6 +290,9 @@ def submit():
               "โดยระบุอย่างน้อย วิชา / ชั้น / เรื่อง ที่ต้องการ (เช่น \"ทำแผนที่ 1 เรื่อง เศษส่วน ป.4\")")
         return redirect(url_for("plan_form"))
     u = current_user()
+    settings = store.load_settings()
+    free_mode = bool(settings.get("free_trial_mode"))
+    svc_plan = catalog.get_service("lesson_plan") or {}
     job = store.create_job(ups, fields, instructions, plan_counter=detect_plans,
                            instructions=instructions, options=options, addons=addon_ids,
                            user_id=u["id"] if u else None)
@@ -271,11 +302,42 @@ def submit():
             shutil.rmtree(d)
             flash(f"ไฟล์ใหญ่เกินไป (สูงสุด {MAX_MB} MB ต่อไฟล์)")
             return redirect(url_for("plan_form"))
+    # Multi-plan: let the teacher choose first; charge after choice when free_mode.
     if job["status"] == "awaiting_choice":
         return redirect(url_for("choose_plan", job_id=job["id"]))
+    if free_mode:
+        cost = catalog.lesson_plan_points_cost(
+            svc_plan,
+            plan_count=job.get("effective_plan_count") or job.get("plan_count") or 1,
+            options=options,
+            addons=addon_ids,
+        )
+        charge = users.charge_for_service(
+            u["id"], cost,
+            reason=f"ใช้บริการ {svc_plan.get('name') or 'แผนการสอน'}",
+            free_trial_mode=True,
+        )
+        if not charge["ok"]:
+            if charge.get("show_promo"):
+                _mark_promo(True)
+            shutil.rmtree(d, ignore_errors=True)
+            flash(charge.get("error") or "ไม่สามารถใช้บริการได้")
+            return redirect(url_for("plan_form"))
+        if charge.get("show_promo"):
+            _mark_promo(True)
+        job = store.mark_job_points_paid(job["id"], points_spent=int(charge.get("points_spent") or 0))
+        try:
+            uu = users.load_user(u["id"])
+            if uu and uu.get("ledger") and not uu["ledger"][0].get("job_id"):
+                uu["ledger"][0]["job_id"] = job["id"]
+                users.save_user(uu)
+        except Exception:
+            pass
+        if job["status"] == "queued":
+            fire_webhook(job["id"])
+        return redirect(url_for("job_page", job_id=job["id"]))
     if job["status"] == "awaiting_payment":
         return redirect(url_for("pay_page", job_id=job["id"]))
-    # Only notify workers once the job is actually in the work queue
     if job["status"] == "queued":
         fire_webhook(job["id"])
     return redirect(url_for("job_page", job_id=job["id"]))
@@ -400,6 +462,25 @@ def service_form(service_id):
                            meta=meta, jsonld_service=True)
 
 
+
+def _mark_promo(show: bool):
+    """Session flag for the top-up promo modal (once-per-session ambient)."""
+    if show:
+        session["show_promo_popup"] = True
+    # ambient: also allow one passive show when free uses already 0
+    # (job page after consume sets it; insufficient points sets it)
+
+
+@app.post("/promo/dismiss")
+def promo_dismiss():
+    session.pop("show_promo_popup", None)
+    session["promo_dismissed"] = True
+    if request.headers.get("X-Requested-With") == "fetch":
+        return {"ok": True}
+    nxt = request.form.get("next") or request.referrer or "/"
+    return redirect(nxt)
+
+
 @app.post("/services/<service_id>/submit")
 @login_required
 def service_submit(service_id):
@@ -413,26 +494,29 @@ def service_submit(service_id):
         flash(err)
         return redirect(url_for("service_form", service_id=service_id))
     u = current_user()
+    settings = store.load_settings()
+    free_mode = bool(settings.get("free_trial_mode"))
     cost = int(svc.get("points_cost") or 0)
-    if cost > 0:
-        bal = int((u or {}).get("points") or 0)
-        if bal < cost:
-            flash(f"พ้อยท์ไม่พอ — บริการนี้ใช้ {cost} พ้อยท์ (คุณมี {bal} พ้อยท์)")
-            return redirect(url_for("service_form", service_id=service_id))
+    charge = users.charge_for_service(
+        u["id"], cost,
+        reason=f"ใช้บริการ {svc.get('name')}",
+        free_trial_mode=free_mode,
+    )
+    if not charge["ok"]:
+        if charge.get("show_promo"):
+            _mark_promo(True)
+        flash(charge.get("error") or "ไม่สามารถใช้บริการได้")
+        return redirect(url_for("service_form", service_id=service_id))
+    points_spent = int(charge.get("points_spent") or 0)
+    if charge.get("show_promo"):
+        _mark_promo(True)
     # size check helper after create
     file_count = 0
     for v in (uploads or {}).values():
         file_count += len(v) if isinstance(v, list) else 1
-    # Deduct points before creating job (atomic-ish under users lock)
-    if cost > 0:
-        try:
-            users.ensure_points(u["id"], cost, reason=f"ใช้บริการ {svc.get('name')}", job_id=None)
-        except ValueError as e:
-            flash(str(e))
-            return redirect(url_for("service_form", service_id=service_id))
     job = store.create_service_job(svc, inputs, uploads, file_count=max(1, file_count),
-                                   user_id=u["id"] if u else None, points_spent=cost)
-    if cost > 0 and job:
+                                   user_id=u["id"] if u else None, points_spent=points_spent)
+    if points_spent > 0 and job:
         # backfill job_id on latest ledger entry
         try:
             uu = users.load_user(u["id"])
@@ -451,9 +535,9 @@ def service_submit(service_id):
         if os.path.isfile(p) and os.path.getsize(p) > MAX_MB * 1024 * 1024:
             import shutil as _sh
             _sh.rmtree(d)
-            if cost > 0 and u:
+            if points_spent > 0 and u:
                 try:
-                    users.adjust_points(u["id"], cost, reason="คืนพ้อยท์ — ไฟล์ใหญ่เกินไป", job_id=None, typ="refund")
+                    users.adjust_points(u["id"], points_spent, reason="คืนพ้อยท์ — ไฟล์ใหญ่เกินไป", job_id=None, typ="refund")
                 except Exception:
                     pass
             flash(f"ไฟล์ใหญ่เกินไป (สูงสุด {MAX_MB} MB ต่อไฟล์)")
@@ -526,6 +610,42 @@ def choose_plan(job_id):
         else:
             flash("กรุณาเลือกว่าจะทำแผนเดียวหรือทำทั้งหมด")
             return redirect(url_for("choose_plan", job_id=job_id))
+        settings = store.load_settings()
+        if settings.get("free_trial_mode"):
+            u = current_user()
+            if not u:
+                return redirect(url_for("login", next=request.path))
+            job = store.load(job_id)
+            svc_plan = catalog.get_service("lesson_plan") or {}
+            cost = catalog.lesson_plan_points_cost(
+                svc_plan,
+                plan_count=job.get("effective_plan_count") or 1,
+                options=job.get("options") or [],
+                addons=job.get("addons") or [],
+            )
+            charge = users.charge_for_service(
+                u["id"], cost,
+                reason=f"ใช้บริการ {svc_plan.get('name') or 'แผนการสอน'}",
+                free_trial_mode=True,
+            )
+            if not charge["ok"]:
+                if charge.get("show_promo"):
+                    _mark_promo(True)
+                # revert to choice so they can retry after top-up
+                with store.lock():
+                    j = store.load(job_id)
+                    if j:
+                        j["status"] = "awaiting_choice"
+                        j["payment"] = None
+                        store.save(j)
+                flash(charge.get("error") or "ไม่สามารถใช้บริการได้")
+                return redirect(url_for("choose_plan", job_id=job_id))
+            if charge.get("show_promo"):
+                _mark_promo(True)
+            job = store.mark_job_points_paid(job_id, points_spent=int(charge.get("points_spent") or 0))
+            if job["status"] == "queued":
+                fire_webhook(job_id)
+            return redirect(url_for("job_page", job_id=job_id))
         return redirect(url_for("pay_page", job_id=job_id))
     avg = store.avg_minutes_per_plan()
     price = float(store.load_settings().get("price_per_plan") or 10)
@@ -980,11 +1100,19 @@ def admin():
                 })
             except (TypeError, ValueError):
                 continue
+        free_mode = request.form.get("free_trial_mode") == "1"
         store.save_settings({
             "points_topup_enabled": enabled,
             "points_packages": packages or store.DEFAULT_POINTS_PACKAGES,
+            "free_trial_mode": free_mode,
         })
         flash("บันทึกตั้งค่าพ้อยท์เรียบร้อยแล้ว")
+        if free_mode:
+            zero = [s for s in catalog.all_services()
+                    if s.get("enabled") and int(s.get("points_cost") or 0) <= 0]
+            if zero:
+                flash("⚠️ โหมดใช้ฟรีเปิดแล้ว แต่บริการที่เปิดอยู่ยังตั้งพ้อยท์เป็น 0 — "
+                      "หลังใช้ฟรีครั้งแรกครูจะยังใช้ต่อได้ฟรี จนกว่าคุณจะตั้งราคาพ้อยท์ในตารางบริการ")
         return redirect(url_for("admin") + "#users")
     if action == "points_adjust":
         uid = request.form.get("user_id") or ""
@@ -998,6 +1126,20 @@ def admin():
             flash(f"ปรับพ้อยท์ {u.get('email') or uid}: {amount:+d} → คงเหลือ {u.get('points')}")
         except (KeyError, ValueError) as e:
             flash(f"ปรับพ้อยท์ไม่สำเร็จ: {e}")
+        return redirect(url_for("admin", user_q=request.form.get("user_q") or "", user_id=uid) + "#users")
+
+    if action == "free_uses_adjust":
+        uid = request.form.get("user_id") or ""
+        try:
+            n = int(request.form.get("free_uses") or 0)
+        except ValueError:
+            n = 0
+        reason = (request.form.get("reason") or "").strip() or "แอดมินตั้งสิทธิ์ฟรี"
+        try:
+            u = users.set_free_uses(uid, n, reason=reason, admin="admin")
+            flash(f"ตั้งสิทธิ์ฟรี {u.get('email') or uid}: เหลือ {users.free_uses_left(u)} ครั้ง")
+        except (KeyError, ValueError) as e:
+            flash(f"ตั้งสิทธิ์ฟรีไม่สำเร็จ: {e}")
         return redirect(url_for("admin", user_q=request.form.get("user_q") or "", user_id=uid) + "#users")
     if action == "upload_qr":
         f = request.files.get("qr_image")

@@ -127,24 +127,27 @@
     <button class="btn sm" type="submit">ค้นหา</button>
   </form>
   <div style="overflow-x:auto"><table>
-    <tr><th>ชื่อ</th><th>อีเมล</th><th>พ้อยท์</th><th>เข้าใช้ล่าสุด</th><th></th></tr>
+    <tr><th>ชื่อ</th><th>อีเมล</th><th>พ้อยท์</th><th>ฟรีเหลือ</th><th>เข้าใช้ล่าสุด</th><th></th></tr>
     {% for u in user_list[:50] %}
     <tr {% if selected_user and selected_user.id == u.id %}style="background:#eff6ff"{% endif %}>
       <td>{{ u.name }}</td>
       <td class="mono small">{{ u.email }}</td>
       <td><b>{{ u.points|default(0) }}</b></td>
+      <td>{{ u.free_uses_left if u.free_uses_left is defined else 1 }}</td>
       <td class="small">{{ u.last_login or '-' }}</td>
       <td><a class="btn sm sec" href="/admin?user_id={{ u.id }}{% if user_q %}&user_q={{ user_q }}{% endif %}#users">ดู</a></td>
     </tr>
     {% else %}
-    <tr><td colspan="5" class="hint">ยังไม่มีผู้ใช้ (เข้าสู่ระบบด้วย Google แล้วจะปรากฏที่นี่)</td></tr>
+    <tr><td colspan="6" class="hint">ยังไม่มีผู้ใช้ (เข้าสู่ระบบด้วย Google แล้วจะปรากฏที่นี่)</td></tr>
     {% endfor %}
   </table></div>
 
   {% if selected_user %}
   <hr style="border:none;border-top:1px solid var(--bd);margin:18px 0">
   <h4 style="margin:0 0 8px">{{ selected_user.name }} · {{ selected_user.email }}</h4>
-  <p>คงเหลือ <b>{{ selected_user.points|default(0) }}</b> พ้อยท์ · สมัคร {{ selected_user.created_at }}</p>
+  <p>คงเหลือ <b>{{ selected_user.points|default(0) }}</b> พ้อยท์ ·
+     สิทธิ์ฟรีเหลือ <b>{{ selected_user.free_uses_left if selected_user.free_uses_left is defined else 1 }}</b> ครั้ง ·
+     สมัคร {{ selected_user.created_at }}</p>
   <form method="post" class="grid" style="align-items:end;margin:12px 0">
     <input type="hidden" name="action" value="points_adjust">
     <input type="hidden" name="user_id" value="{{ selected_user.id }}">
@@ -152,6 +155,14 @@
     <div><label>จำนวน (+ เพิ่ม / − หัก)</label><input type="number" name="amount" required placeholder="เช่น 100 หรือ -20"></div>
     <div class="full"><label>เหตุผล</label><input type="text" name="reason" placeholder="เช่น เติมแอดมิน / ชดเชย"></div>
     <div><button class="btn" type="submit">บันทึกพ้อยท์</button></div>
+  </form>
+  <form method="post" class="grid" style="align-items:end;margin:12px 0">
+    <input type="hidden" name="action" value="free_uses_adjust">
+    <input type="hidden" name="user_id" value="{{ selected_user.id }}">
+    <input type="hidden" name="user_q" value="{{ user_q or '' }}">
+    <div><label>ตั้งสิทธิ์ฟรี (ครั้ง)</label><input type="number" name="free_uses" min="0" step="1" value="{{ selected_user.free_uses_left if selected_user.free_uses_left is defined else 1 }}" required></div>
+    <div class="full"><label>เหตุผล</label><input type="text" name="reason" placeholder="เช่น รีเซ็ตสิทธิ์ทดลอง"></div>
+    <div><button class="btn sec" type="submit">บันทึกสิทธิ์ฟรี</button></div>
   </form>
   <h4>สมุดบัญชี (ล่าสุด)</h4>
   <div style="overflow-x:auto"><table>
@@ -176,6 +187,10 @@
   <form method="post">
     <input type="hidden" name="action" value="points_settings">
     <label class="chk"><input type="checkbox" name="points_topup_enabled" value="1" {% if settings.points_topup_enabled %}checked{% endif %}> เปิดให้เติมพ้อยท์</label>
+    <label class="chk" style="display:block;margin-top:10px"><input type="checkbox" name="free_trial_mode" value="1" {% if settings.free_trial_mode %}checked{% endif %}>
+      โหมดใช้ฟรี 1 ครั้ง + โปรเติมพ้อยท์</label>
+    <p class="hint">ค่าเริ่มต้น <b>ปิด</b> — เมื่อเปิด ครูที่ล็อกอินด้วย Google ใช้ฟรีได้ 1 ครั้งต่อบัญชี แล้วระบบจะโชว์ป๊อปอัปโปรเติม 100→100 / 200→220
+      · <b>ตั้งพ้อยท์ต่อบริการในตารางด้านล่างก่อนเปิด</b> ไม่งั้นหลังใช้ฟรีแล้วยังใช้ต่อได้เพราะราคาเป็น 0</p>
     <p class="hint">แพ็กเกจ (บาท → พ้อยท์) — ว่างแถวที่ไม่ใช้</p>
     <div style="overflow-x:auto"><table>
       <tr><th>รหัส</th><th>บาท</th><th>พ้อยท์</th><th>ป้าย</th></tr>
@@ -196,7 +211,8 @@
 
 <div class="card" id="services">
   <h3 style="margin-top:0">🛠️ บริการ (แคตตาล็อก)</h3>
-  <p class="hint">ราคาเก็บไว้ในระบบ แต่ครูจะเห็นราคาเฉพาะบริการที่เปิด <b>เก็บเงิน</b> — ค่าเริ่มต้นบริการใหม่ปิดเก็บเงิน (ส่งตรงเข้าคิว)</p>
+  <p class="hint">ราคาเก็บไว้ในระบบ แต่ครูจะเห็นราคาเฉพาะบริการที่เปิด <b>เก็บเงิน</b> — ค่าเริ่มต้นบริการใหม่ปิดเก็บเงิน (ส่งตรงเข้าคิว)
+    · คอลัมน์ <b>พ้อยท์</b> ใช้เมื่อเปิดโหมดใช้ฟรี+โปรเติม — ตั้งค่าให้มากกว่า 0 ก่อนเปิดโหมด</p>
   <form method="post">
     <input type="hidden" name="action" value="save_services">
     <div style="overflow-x:auto"><table>
