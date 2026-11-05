@@ -1,7 +1,7 @@
 # คู่มือส่งต่องาน: ระบบเว็บจัดทำแผนการสอน (lesson-plan-web)
 
 > สำหรับบอท/ผู้ดูแลคนใหม่ที่จะรับช่วงดูแลเว็บและประมวลผลคิวงาน
-> ปรับปรุงล่าสุด: 31 ต.ค. 2569 (เวลาไทย)
+> ปรับปรุงล่าสุด: 5 พ.ย. 2569 (เวลาไทย) — เพิ่ม PromptPay slip payment
 
 ---
 
@@ -10,7 +10,7 @@
 - **เว็บแอป:** https://lesson-plan-web.onrender.com
 - **เทคโนโลยี:** Flask + gunicorn (worker เดียว, 4 threads) โฮสต์บน **Render free plan (Singapore)**
   - Service ID: `srv-dbic8vuc6qcc73d8nbvg`
-  - **ดิสก์ชั่วคราว:** ทุกครั้งที่ deploy/restart งานและไฟล์บนเว็บ **หายหมด**
+  - **ดิสก์ชั่วคราว (ไม่มี persistent disk ใน render.yaml):** ทุกครั้งที่ deploy/restart งาน ไฟล์สลิป รูป QR และการตั้งค่าใน `data/` บนเว็บ **หายหมด** — ควรอัปโหลด QR ใหม่หลัง redeploy หรือเพิ่ม Render Disk ภายหลัง
   - หลับเมื่อว่าง ~15 นาที ปลุกครั้งแรกใช้เวลา ~1 นาที (สคริปต์ worker retry ให้เอง)
 - **โค้ด:** `/workspace/lp-web` · Repo: https://github.com/botbeamty11-hash/lesson-plan-web
   - GitHub auto-deploy **ไม่ทำงาน** → ต้อง deploy เองผ่าน Render และทำ **เฉพาะตอนคิวว่าง** เท่านั้น
@@ -23,6 +23,9 @@
 4. **ตัวเลือกด่วน 3 ข้อ** (`options`): ทำภาพประกอบเพิ่ม · ทำใบงาน/ใบความรู้ · แก้ไขข้อผิดพลาด
 5. **ช่องรายละเอียด (ไม่บังคับ):** ชื่อครู, วันที่สอน (`teach_day` / `teach_month` ชื่อเดือนไทย / `teach_year` พ.ศ.), แผนที่, หน่วย, ภาคเรียน, ปีการศึกษา — ช่องที่เว้นว่าง ให้เว้นว่างในฟอร์มด้วย
 6. **จำนวนแผน:** `plan_mode` = `one` (ทำเฉพาะแผนใน `plan_selected`) หรือ `all` (ทำทุกแผน N แผน รวมเป็น .docx เดียว)
+7. **ชำระเงิน PromptPay:** หลังเลือกแผน (หรือส่งงานแผนเดียว) ครูต้องสแกน QR + อัปโหลดสลิป — **งานจะเข้าคิว `queued` หลังตรวจสลิปผ่านเท่านั้น**
+   - ราคา = (ราคาต่อแผน จากตั้งค่าแอดมิน, ค่าเริ่มต้น 10 บาท) × จำนวนแผนที่ครูเลือก
+   - สถานะใหม่: `awaiting_payment` → `payment_review` (อัปโหลดสลิปแล้ว) → `queued` หรือ `payment_rejected` (อัปโหลดใหม่ได้)
 
 ### การคำนวณเวลารอ (ETA)
 ```
@@ -72,7 +75,9 @@ ETA = จำนวนแผนที่ต้องทำจริง × เว�
 
 ## 3. ขั้นตอนทำงานแต่ละงาน
 
-1. **ตรวจคิว:** `python3 remote_worker.py list` — ถ้าไม่มีงาน `queued` ให้หยุดเงียบ ๆ
+0. **ตรวจสลิป (ถ้ามี):** `python3 remote_worker.py payments` — ถ้ามีงาน `payment_review` ให้ตรวจสลิปก่อน (ดูหัวข้อ 3.1) แล้ว `pay-ok` / `pay-reject`
+1. **ตรวจคิวงานจัดทำ:** `python3 remote_worker.py list` — ถ้าไม่มีงาน `queued` (และไม่มีสลิปรอตรวจ) ให้หยุดเงียบ ๆ
+   - `list` / `claim` **จะไม่หยิบงานที่ยังไม่จ่าย** (`awaiting_payment` / `payment_review` / `payment_rejected`)
 2. **รับงาน (claim):** `python3 remote_worker.py claim <id>` → ดาวน์โหลดไฟล์ไปที่ `lp_jobs/<id>/` และพิมพ์ JSON ของงาน
    - claim คือ "ตัวล็อก" — ใคร claim ได้ คนนั้นรับผิดชอบงาน
 3. **อ่านคำสั่งก่อนเสมอ:** `instructions`/`note`, `options`, `plan_mode`/`plan_selected`, ช่องรายละเอียด
@@ -87,6 +92,32 @@ ETA = จำนวนแผนที่ต้องทำจริง × เว�
 9. **ส่งงาน:** `python3 remote_worker.py complete <id> <ไฟล์.docx> <ไฟล์.pdf>`
    - ทำไม่ได้จริง → `python3 remote_worker.py fail <id> "เหตุผลภาษาไทยที่ครูเข้าใจได้"`
 10. **รายงานผู้ใช้เป็นภาษาไทย:** 1 บรรทัดต่องาน (รหัสงาน, ชื่อแผน, เสร็จ/ล้มเหลวเพราะอะไร)
+
+---
+
+## 3.1 ตรวจสลิป PromptPay (บังคับก่อนเข้าคิว)
+
+งานจะเข้า `queued` **หลังสลิปผ่านการตรวจเท่านั้น** บอท worker เป็นผู้ตรวจ (มองเห็นรูป) หรือแอดมินกดอนุมัติเองที่ `/admin`
+
+```bash
+python3 remote_worker.py payments                 # รายการงาน payment_review
+python3 remote_worker.py slip <id> [outfile]      # ดาวน์โหลดรูปสลิป
+python3 remote_worker.py pay-ok <id> --ref <เลขอ้างอิง> --amount <ยอด> --time "<วันเวลาโอน>" \
+        --payer "<ชื่อผู้โอน>" --payee "<ชื่อผู้รับบนสลิป>" --note "..."
+python3 remote_worker.py pay-reject <id> "เหตุผลภาษาไทยที่ครูเข้าใจได้"
+```
+
+### เช็คลิสต์ก่อน `pay-ok` (ต้องผ่านทุกข้อ)
+1. **ชื่อผู้รับบนสลิป** ตรงกับชื่อบัญชีที่ตั้งไว้ (ค่าเริ่มต้น `พิภูษณ ยิ้มหนองโพธิ์` — ดูจาก `payments` หรือ `/admin`)
+2. **ยอดเงิน** เท่ากับ `amount_due` ของงาน (= ราคาต่อแผน × จำนวนแผนที่ครูเลือก)
+3. **เวลาโอน** ต้อง**หลัง** `payment.requested_at` (เวลาสร้างคำขอชำระ) และควรเป็นช่วงเวลาใกล้เคียง (ไม่ใช่สลิปเก่าหลายวัน)
+4. **เลขที่อ้างอิงสลิป (slip ref)** ยังไม่เคยใช้กับงานอื่น — ถ้าซ้ำ เซิร์ฟเวอร์จะปฏิเสธ `pay-ok` (HTTP 409) ให้ `pay-reject` แทน
+5. **หมายเลข PromptPay / เบอร์ผู้รับ** (ถ้าสลิปมี แสดงบางหลัก) สอดคล้องกับ PromptPay ID ของ QR เมื่อทราบค่า
+6. **สลิปดูของจริง** — ไม่ใช่ภาพตัดต่อ/ซ้ำกับสลิปงานอื่นอย่างชัดเจน
+
+ถ้าข้อใดไม่ผ่าน → `pay-reject` พร้อมเหตุผลสั้น ๆ ภาษาไทย (ครูจะอัปโหลดสลิปใหม่ได้)
+
+หลัง `pay-ok` งานจะเป็น `queued` และบอทจัดทำแผนดึงด้วย `list` / `claim` ตามปกติ
 
 ---
 
@@ -108,6 +139,10 @@ export LP_WORKER_TOKEN="$(grep '^WORKER_TOKEN=' .env | cut -d= -f2-)"
 | `python3 remote_worker.py fail <id> "ข้อความ"` | ปิดงานเป็นล้มเหลว พร้อมเหตุผล |
 | `python3 remote_worker.py requeue <id>` | คืนงานเข้าคิว |
 | `python3 remote_worker.py health` | ตรวจว่าเว็บตื่น/ทำงานอยู่ |
+| `python3 remote_worker.py payments [--status …]` | งานรอตรวจสลิป (ค่าเริ่มต้น `payment_review`) |
+| `python3 remote_worker.py slip <id> [out]` | ดาวน์โหลดสลิป |
+| `python3 remote_worker.py pay-ok <id> --ref …` | อนุมัติสลิป → งานเข้า `queued` |
+| `python3 remote_worker.py pay-reject <id> "เหตุผล"` | ปฏิเสธสลิป → ครูอัปโหลดใหม่ได้ |
 
 ตัวแปรเสริม: `LP_WORK_DIR` (ค่าเริ่มต้น `./lp_jobs`)
 
@@ -163,7 +198,7 @@ export LP_WORKER_TOKEN="$(grep '^WORKER_TOKEN=' .env | cut -d= -f2-)"
 ```
 Check the lesson-plan web app queue at https://lesson-plan-web.onrender.com and process any waiting submissions.
 
-How: on my computer, in /workspace/lp-web, run remote_worker.py with LP_BASE_URL=https://lesson-plan-web.onrender.com and LP_WORKER_TOKEN set from WORKER_TOKEN in /workspace/lp-web/.env (never print or reveal secret values). First check for queued jobs (the free Render instance may take ~1 minute to wake; the script retries). If none are queued, stop silently.
+How: on my computer, in /workspace/lp-web, run remote_worker.py with LP_BASE_URL=https://lesson-plan-web.onrender.com and LP_WORKER_TOKEN set from WORKER_TOKEN in /workspace/lp-web/.env (never print or reveal secret values). First run `payments` and verify any PromptPay slips in payment_review (see GROKBOT_GUIDE.md §3.1: payee name, amount_due, transfer time after requested_at, unique slip ref, PromptPay digits, genuine slip) with pay-ok or pay-reject. Then check for queued jobs (the free Render instance may take ~1 minute to wake; the script retries). If none are queued and no slips need review, stop silently. Unpaid jobs must never be claimed.
 
 For each queued job, hand the work to a background executor with a self-contained brief: claim the job, download the files (file 1 = that submitter's school lesson-plan form/template, always present; file 2 = their source data file, optional, .doc/.docx/.pdf), read the data with judgment (sources vary between people, so don't assume a fixed field mapping), and rewrite the content into the submitter's own school form, keeping that form's layout, headings, fonts (TH Sarabun), and styling. Read the submitter's free-text instructions (instructions/note) and ticked options (e.g. extra illustrations, worksheets/knowledge sheets, fix errors) first and follow them; if an instruction conflicts with the school form, keep the form and say what was done in the result. If there is no data file (from_scratch), write the plan yourself from the instructions (subject, grade, topic, plan number) with sound, age-appropriate content aligned to Thai curriculum indicators. A data file may hold several plans: if the job says plan_mode 'one', produce only the plan in plan_selected; if 'all' (or the field is missing and the file has several plans), produce every plan in one combined .docx. Convert .doc/.pdf with soffice where needed. Fill the optional details the submitter typed (teacher name, teaching date day/month/year in Thai, plan number, unit, semester, academic year); any detail they left blank stays blank as in the form. Fix obvious factual or math errors and keep the Thai language natural. For reference, /workspace/lp/fill_template.py and /workspace/lp/sample_inequality.json show a worked example for the default GPAS 5 Steps template (/workspace/lp/main.docx), and /workspace/lp-web/lp_jobs/20261030-232705-5e63a5/build/build_plan.py is a worked example for a different school form. The output must look right in Microsoft Word, not just LibreOffice: follow /workspace/lp/WORD_COMPAT_NOTES.md and run /workspace/lp/word_compat.py on the final .docx before saving. Render the result to PDF (/workspace/lp/render.sh) and look at the pages to check nothing is broken. Right before completing, re-check the job's status on the site: if it is no longer 'processing' (for example the admin cancelled it as failed), do not upload anything. Otherwise complete the job with the .docx and .pdf. If a job truly can't be done (unreadable files, no usable data or instructions), mark it failed with a short Thai reason the submitter can understand.
 

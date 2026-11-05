@@ -57,7 +57,18 @@ UPLOADS = [("template", "ไฟล์ที่ 1: ฟอร์มแผนกา
 REQUIRED_UPLOADS = {"template"}
 OPTIONS = store.OPTIONS  # quick-option checkboxes (Thai labels, stored as-is in job['options'])
 MIN_INSTRUCTIONS = 10    # without a data file, instructions must describe subject/grade/topic
-STATUS_TH = {"awaiting_choice": "รอเลือกแผน", "queued": "รอคิว", "processing": "กำลังทำ", "done": "เสร็จแล้ว", "failed": "ผิดพลาด"}
+STATUS_TH = {
+    "awaiting_choice": "รอเลือกแผน",
+    "awaiting_payment": "รอชำระเงิน",
+    "payment_review": "รอตรวจสลิป",
+    "payment_rejected": "สลิปไม่ผ่าน",
+    "queued": "รอคิว",
+    "processing": "กำลังทำ",
+    "done": "เสร็จแล้ว",
+    "failed": "ผิดพลาด",
+}
+SLIP_MAX_MB = 10
+QR_UPLOAD_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 
 
 def fire_webhook(job_id):
@@ -121,7 +132,11 @@ def submit():
             return redirect(url_for("index"))
     if job["status"] == "awaiting_choice":
         return redirect(url_for("choose_plan", job_id=job["id"]))
-    fire_webhook(job["id"])
+    if job["status"] == "awaiting_payment":
+        return redirect(url_for("pay_page", job_id=job["id"]))
+    # Only notify workers once the job is actually in the work queue
+    if job["status"] == "queued":
+        fire_webhook(job["id"])
     return redirect(url_for("job_page", job_id=job["id"]))
 
 
@@ -162,11 +177,103 @@ def choose_plan(job_id):
         else:
             flash("กรุณาเลือกว่าจะทำแผนเดียวหรือทำทั้งหมด")
             return redirect(url_for("choose_plan", job_id=job_id))
-        fire_webhook(job_id)
-        return redirect(url_for("job_page", job_id=job_id))
+        return redirect(url_for("pay_page", job_id=job_id))
     avg = store.avg_minutes_per_plan()
+    price = float(store.load_settings().get("price_per_plan") or 10)
     return render_template("choose.html", job=job, n=job.get("plan_count") or 1, nums=nums,
-                           avg=round(avg, 1))
+                           avg=round(avg, 1), price_per_plan=price)
+
+
+# ---------------- payment (PromptPay slip) ----------------
+@app.route("/job/<job_id>/pay", methods=["GET", "POST"])
+def pay_page(job_id):
+    try:
+        job = store.load(job_id)
+    except ValueError:
+        abort(404)
+    if not job:
+        abort(404)
+    if job["status"] == "awaiting_choice":
+        return redirect(url_for("choose_plan", job_id=job_id))
+    if job["status"] not in ("awaiting_payment", "payment_rejected", "payment_review"):
+        return redirect(url_for("job_page", job_id=job_id))
+    if not job.get("payment"):
+        store.begin_payment(job_id)
+        job = store.load(job_id)
+    if request.method == "POST":
+        f = request.files.get("slip")
+        if not f or not f.filename:
+            flash("กรุณาอัปโหลดสลิปการโอนเงิน")
+            return redirect(url_for("pay_page", job_id=job_id))
+        ext = os.path.splitext(f.filename)[1].lower()
+        if ext not in store.SLIP_EXTS:
+            flash("รองรับสลิปเป็นไฟล์รูป (.jpg .png .webp .gif) หรือ .pdf เท่านั้น")
+            return redirect(url_for("pay_page", job_id=job_id))
+        # size check after save
+        try:
+            job = store.save_slip(job_id, f.save, os.path.basename(f.filename))
+        except ValueError as e:
+            flash(str(e))
+            return redirect(url_for("pay_page", job_id=job_id))
+        d = store.job_dir(job_id)
+        slip_path = os.path.join(d, job["payment"]["slip_file"])
+        if os.path.getsize(slip_path) > SLIP_MAX_MB * 1024 * 1024:
+            try:
+                os.remove(slip_path)
+            except OSError:
+                pass
+            flash(f"ไฟล์สลิปใหญ่เกินไป (สูงสุด {SLIP_MAX_MB} MB)")
+            # revert to awaiting_payment
+            with store.lock():
+                j = store.load(job_id)
+                j["status"] = "awaiting_payment"
+                j["payment"]["slip_file"] = None
+                j["files"]["slip"] = None
+                store.save(j)
+            return redirect(url_for("pay_page", job_id=job_id))
+        flash("อัปโหลดสลิปแล้ว รอตรวจสอบการชำระเงิน")
+        return redirect(url_for("job_page", job_id=job_id))
+    settings = store.load_settings()
+    pay = job["payment"]
+    qr_path, qr_src = store.qr_image_path_for_display(amount=pay.get("amount_due"))
+    return render_template("pay.html", job=job, pay=pay, settings=settings,
+                           qr_src=qr_src, has_qr=bool(qr_path),
+                           status_th=STATUS_TH, slip_max_mb=SLIP_MAX_MB,
+                           plan_choice=plan_choice_text(job))
+
+
+@app.get("/job/<job_id>/pay/qr")
+def pay_qr(job_id):
+    try:
+        job = store.load(job_id)
+    except ValueError:
+        abort(404)
+    if not job or not job.get("payment"):
+        abort(404)
+    amount = (job.get("payment") or {}).get("amount_due")
+    path, src = store.qr_image_path_for_display(amount=amount)
+    if not path:
+        abort(404)
+    return send_file(path, mimetype="image/png", download_name="promptpay_qr.png")
+
+
+@app.get("/job/<job_id>/slip")
+def job_slip(job_id):
+    """Teacher/admin can view the uploaded slip (no auth on teacher link; id is unguessable)."""
+    try:
+        job = store.load(job_id)
+    except ValueError:
+        abort(404)
+    if not job:
+        abort(404)
+    pay = job.get("payment") or {}
+    name = pay.get("slip_file") or (job.get("files") or {}).get("slip")
+    if not name:
+        abort(404)
+    path = os.path.join(store.job_dir(job_id), name)
+    if not os.path.isfile(path):
+        abort(404)
+    return send_file(path, download_name=pay.get("slip_original_name") or name)
 
 
 @app.get("/job/<job_id>")
@@ -179,11 +286,13 @@ def job_page(job_id):
         abort(404)
     if job["status"] == "awaiting_choice":
         return redirect(url_for("choose_plan", job_id=job_id))
+    if job["status"] in ("awaiting_payment", "payment_rejected"):
+        return redirect(url_for("pay_page", job_id=job_id))
     f = job["fields"]
     teach_date = " ".join(x for x in (f.get("teach_day"), f.get("teach_month"), f.get("teach_year")) if x)
     return render_template("job.html", job=job, labels=LABELS, teach_date=teach_date,
                            plan_count=store.plan_count_of(job), plan_choice=plan_choice_text(job),
-                           instructions=store.instructions_of(job))
+                           instructions=store.instructions_of(job), status_th=STATUS_TH)
 
 
 @app.get("/api/job/<job_id>")
@@ -226,7 +335,8 @@ def admin():
         return redirect(url_for("admin"))
     if not session.get("admin"):
         return render_template("admin_login.html")
-    if request.method == "POST" and request.form.get("action") == "upload":
+    action = request.form.get("action") if request.method == "POST" else None
+    if action == "upload":
         f = request.files.get("template")
         if not f or not f.filename.lower().endswith(".docx"):
             flash("กรุณาเลือกไฟล์แม่แบบ .docx")
@@ -238,6 +348,62 @@ def admin():
             os.replace(tmp, store.TEMPLATE_PATH)
             flash("อัปโหลดแม่แบบใหม่เรียบร้อยแล้ว")
         return redirect(url_for("admin"))
+    if action == "settings":
+        store.save_settings({
+            "price_per_plan": request.form.get("price_per_plan"),
+            "payee_name": request.form.get("payee_name"),
+            "promptpay_id": request.form.get("promptpay_id"),
+        })
+        flash("บันทึกการตั้งค่าเรียบร้อยแล้ว")
+        return redirect(url_for("admin") + "#settings")
+    if action == "upload_qr":
+        f = request.files.get("qr_image")
+        if not f or not f.filename:
+            flash("กรุณาเลือกไฟล์รูป QR PromptPay")
+        else:
+            ext = os.path.splitext(f.filename)[1].lower()
+            if ext not in QR_UPLOAD_EXTS:
+                flash("รองรับเฉพาะไฟล์รูป .png .jpg .webp .gif")
+            else:
+                s = store.set_qr_image(f.save, os.path.basename(f.filename))
+                msg = "อัปโหลด QR PromptPay เรียบร้อยแล้ว"
+                if s.get("qr_decoded_id"):
+                    msg += f" (ถอดรหัสได้ PromptPay ID: …{str(s['qr_decoded_id'])[-4:]})"
+                else:
+                    msg += " (ยังถอดรหัส ID จากรูปไม่ได้ — กรอก PromptPay ID เองได้)"
+                flash(msg)
+        return redirect(url_for("admin") + "#settings")
+    if action == "clear_qr":
+        store.clear_qr_image()
+        flash("ลบรูป QR แล้ว")
+        return redirect(url_for("admin") + "#settings")
+    if action == "pay_approve":
+        jid = request.form.get("job_id") or ""
+        try:
+            j = store.approve_payment(
+                jid,
+                slip_ref=request.form.get("slip_ref") or None,
+                amount=request.form.get("amount") or None,
+                transfer_time=request.form.get("transfer_time") or None,
+                payer_name=request.form.get("payer_name") or None,
+                payee_name=request.form.get("payee_name") or None,
+                note=request.form.get("note") or "admin override",
+                by="admin",
+            )
+            fire_webhook(j["id"])
+            flash(f"อนุมัติการชำระเงินงาน {jid} แล้ว — เข้าคิวแล้ว")
+        except (KeyError, ValueError) as e:
+            flash(f"อนุมัติไม่สำเร็จ: {e}")
+        return redirect(url_for("admin") + "#payments")
+    if action == "pay_reject":
+        jid = request.form.get("job_id") or ""
+        reason = (request.form.get("reason") or "").strip() or "สลิปไม่ถูกต้อง"
+        try:
+            store.reject_payment(jid, reason, by="admin")
+            flash(f"ปฏิเสธสลิปงาน {jid}: {reason}")
+        except (KeyError, ValueError) as e:
+            flash(f"ปฏิเสธไม่สำเร็จ: {e}")
+        return redirect(url_for("admin") + "#payments")
     tpl = None
     if os.path.exists(store.TEMPLATE_PATH):
         st = os.stat(store.TEMPLATE_PATH)
@@ -245,7 +411,29 @@ def admin():
         tpl = {"size_kb": round(st.st_size / 1024),
                "mtime": datetime.fromtimestamp(st.st_mtime, store.TZ).strftime("%d/%m/%Y %H:%M")}
     jobs = list(reversed(store.all_jobs()))[:50]
-    return render_template("admin.html", tpl=tpl, jobs=jobs, status_th=STATUS_TH)
+    pay_filter = request.args.get("pay_status") or ""
+    if pay_filter:
+        pay_jobs = [j for j in reversed(store.all_jobs()) if j["status"] == pay_filter]
+    else:
+        pay_jobs = [j for j in reversed(store.all_jobs())
+                    if j["status"] in store.PAYMENT_STATUSES
+                    or (j.get("payment") and j["status"] in ("queued", "processing", "done", "failed"))]
+    pay_jobs = pay_jobs[:100]
+    settings = store.load_settings()
+    totals = store.payment_totals()
+    has_qr = os.path.isfile(store.QR_IMAGE_PATH)
+    return render_template("admin.html", tpl=tpl, jobs=jobs, status_th=STATUS_TH,
+                           pay_jobs=pay_jobs, pay_filter=pay_filter, settings=settings,
+                           totals=totals, has_qr=has_qr)
+
+
+@app.get("/admin/qr")
+def admin_qr():
+    if not session.get("admin"):
+        abort(403)
+    if not os.path.isfile(store.QR_IMAGE_PATH):
+        abort(404)
+    return send_file(store.QR_IMAGE_PATH, mimetype="image/png", download_name="promptpay_qr.png")
 
 
 @app.get("/admin/template")
@@ -269,7 +457,7 @@ def require_worker():
         abort(401)
 
 
-WORKER_FILE_KINDS = ("template", "source", "result_docx", "result_pdf")
+WORKER_FILE_KINDS = ("template", "source", "result_docx", "result_pdf", "slip")
 
 
 def worker_view(job):
@@ -285,8 +473,15 @@ def worker_view(job):
     j["options"] = job.get("options") or []
     j["from_scratch"] = bool(job.get("from_scratch"))
     j["eta_factor"] = store.eta_factor(job)
+    j["payment"] = job.get("payment")
+    files = job.get("files") or {}
+    # slip may live only under payment.slip_file
+    if job.get("payment") and job["payment"].get("slip_file") and not files.get("slip"):
+        files = dict(files)
+        files["slip"] = job["payment"]["slip_file"]
+        j["files"] = files
     j["urls"] = {k: url_for("worker_file", job_id=job["id"], kind=k, _external=True)
-                 for k in WORKER_FILE_KINDS if job["files"].get(k)}
+                 for k in WORKER_FILE_KINDS if files.get(k)}
     j["urls"]["page"] = url_for("job_page", job_id=job["id"], _external=True)
     return j
 
@@ -326,7 +521,11 @@ def worker_show(job_id):
 def worker_claim(job_id):
     require_worker()
     load_or_404(job_id)
-    return jsonify({"job": worker_view(store.claim(job_id))})
+    try:
+        j = store.claim(job_id)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    return jsonify({"job": worker_view(j)})
 
 
 @app.post("/api/worker/<job_id>/requeue")
@@ -342,11 +541,16 @@ def worker_file(job_id, kind):
     j = load_or_404(job_id)
     if kind not in WORKER_FILE_KINDS:
         return jsonify({"error": f"unknown file kind: {kind}"}), 404
-    if not j["files"].get(kind) or not os.path.isfile(os.path.join(store.job_dir(job_id), j["files"][kind])):
+    name = j["files"].get(kind)
+    if kind == "slip" and not name:
+        name = (j.get("payment") or {}).get("slip_file")
+    if not name or not os.path.isfile(os.path.join(store.job_dir(job_id), name)):
         msg = "no source file (job is from_scratch: use instructions)" if kind == "source" else f"no {kind} file"
         return jsonify({"error": msg, "kind": kind, "from_scratch": bool(j.get("from_scratch"))}), 404
-    name = j["files"][kind]
-    orig = j["files"].get(kind + "_original_name") or name
+    if kind == "slip":
+        orig = (j.get("payment") or {}).get("slip_original_name") or name
+    else:
+        orig = j["files"].get(kind + "_original_name") or name
     return send_file(os.path.join(store.job_dir(job_id), name), as_attachment=True,
                      download_name=orig)
 
@@ -377,6 +581,54 @@ def worker_fail(job_id):
     load_or_404(job_id)
     data = request.form if request.form else (request.get_json(silent=True) or {})
     return jsonify({"job": worker_view(store.fail(job_id, data.get("message") or "เกิดข้อผิดพลาด"))})
+
+
+@app.get("/api/worker/payments")
+def worker_payments():
+    """List jobs awaiting slip verification (payment_review by default)."""
+    require_worker()
+    st = request.args.get("status") or "payment_review"
+    jobs = [j for j in store.all_jobs() if j["status"] == st]
+    return jsonify({"jobs": [worker_view(j) for j in jobs], "settings": {
+        "price_per_plan": store.load_settings().get("price_per_plan"),
+        "payee_name": store.load_settings().get("payee_name"),
+        "promptpay_id": store.load_settings().get("promptpay_id") or store.load_settings().get("qr_decoded_id"),
+    }})
+
+
+@app.post("/api/worker/<job_id>/pay-ok")
+def worker_pay_ok(job_id):
+    require_worker()
+    load_or_404(job_id)
+    data = request.form if request.form else (request.get_json(silent=True) or {})
+    try:
+        j = store.approve_payment(
+            job_id,
+            slip_ref=data.get("slip_ref") or data.get("ref"),
+            amount=data.get("amount"),
+            transfer_time=data.get("transfer_time") or data.get("time"),
+            payer_name=data.get("payer_name") or data.get("payer"),
+            payee_name=data.get("payee_name") or data.get("payee"),
+            note=data.get("note"),
+            by="worker",
+        )
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 409
+    fire_webhook(j["id"])
+    return jsonify({"job": worker_view(j)})
+
+
+@app.post("/api/worker/<job_id>/pay-reject")
+def worker_pay_reject(job_id):
+    require_worker()
+    load_or_404(job_id)
+    data = request.form if request.form else (request.get_json(silent=True) or {})
+    reason = data.get("reason") or data.get("message") or "สลิปไม่ถูกต้อง"
+    try:
+        j = store.reject_payment(job_id, reason, by="worker")
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    return jsonify({"job": worker_view(j)})
 
 
 @app.get("/healthz")

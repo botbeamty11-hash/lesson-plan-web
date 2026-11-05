@@ -7,13 +7,17 @@
   LP_WORK_DIR      (ไม่บังคับ) โฟลเดอร์เก็บไฟล์ที่ดาวน์โหลด ค่าเริ่มต้น ./lp_jobs
 
 คำสั่ง:
-  python3 remote_worker.py list [--all]          งานที่ยังไม่เสร็จ (หรือทั้งหมด)
-  python3 remote_worker.py claim [<id>]          รับงานเก่าสุด (หรือระบุ id) + ดาวน์โหลดฟอร์มและไฟล์ข้อมูล -> JSON
+  python3 remote_worker.py list [--all]          งานที่ยังไม่เสร็จ (queued/processing) หรือทั้งหมด
+  python3 remote_worker.py claim [<id>]          รับงานเก่าสุดที่ queued (หรือระบุ id) + ดาวน์โหลดไฟล์ -> JSON
   python3 remote_worker.py show <id>
   python3 remote_worker.py complete <id> <result.docx> [result.pdf]
   python3 remote_worker.py fail <id> <ข้อความ>
   python3 remote_worker.py requeue <id>
   python3 remote_worker.py health
+  python3 remote_worker.py payments [--status payment_review]
+  python3 remote_worker.py slip <id> [outpath]   ดาวน์โหลดสลิป
+  python3 remote_worker.py pay-ok <id> [--ref R] [--amount A] [--time T] [--payer N] [--payee N] [--note N]
+  python3 remote_worker.py pay-reject <id> <เหตุผล>
 """
 import json, mimetypes, os, sys, time, urllib.error, urllib.request, uuid
 
@@ -163,6 +167,80 @@ def main(argv):
     if cmd == "requeue" and args:
         j = request("POST", f"/api/worker/{args[0]}/requeue", data=b"")["job"]
         pr({"id": j["id"], "status": j["status"]}); return 0
+    if cmd == "payments":
+        st = "payment_review"
+        if "--status" in args:
+            i = args.index("--status")
+            if i + 1 < len(args):
+                st = args[i + 1]
+        data = request("GET", f"/api/worker/payments?status={st}")
+        jobs = data.get("jobs") or []
+        settings = data.get("settings") or {}
+        print(f"# payee={settings.get('payee_name') or '-'}  price/plan={settings.get('price_per_plan')}  "
+              f"promptpay_id={settings.get('promptpay_id') or '(empty)'}  count={len(jobs)}")
+        for j in jobs:
+            pay = j.get("payment") or {}
+            f = j.get("fields") or {}
+            print(f'{j["id"]}  {j["status"]:<16}  due={pay.get("amount_due")}  plans={pay.get("plan_count_billed")}  '
+                  f'req={pay.get("requested_at") or "-"}  slip={pay.get("slip_file") or "-"}  '
+                  f'ผู้สอน={f.get("teacher") or "-"}  ref={pay.get("slip_ref") or "-"}')
+        if not jobs:
+            print("(ไม่มีงานรอตรวจสลิป)" if st == "payment_review" else "(ไม่มีงาน)")
+        return 0
+    if cmd == "slip" and args:
+        jid = args[0]
+        out = args[1] if len(args) > 1 else os.path.join(WORK_DIR, jid, "slip.bin")
+        os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
+        # discover extension via Content-Disposition is hard with urllib; fetch job first
+        job = request("GET", f"/api/worker/{jid}")["job"]
+        pay = job.get("payment") or {}
+        name = pay.get("slip_file") or (job.get("files") or {}).get("slip")
+        if not name:
+            die("no slip on this job")
+        url = (job.get("urls") or {}).get("slip") or f"/api/worker/{jid}/file/slip"
+        body = request("GET", url, raw=True)
+        # fix extension from server filename
+        if out.endswith("slip.bin"):
+            out = os.path.join(WORK_DIR, jid, name)
+            os.makedirs(os.path.dirname(out), exist_ok=True)
+        with open(out, "wb") as f:
+            f.write(body)
+        print(out)
+        return 0
+    if cmd == "pay-ok" and args:
+        jid = args[0]
+        flags = {}
+        i = 1
+        while i < len(args):
+            a = args[i]
+            if a in ("--ref", "--amount", "--time", "--payer", "--payee", "--note") and i + 1 < len(args):
+                flags[a[2:]] = args[i + 1]
+                i += 2
+            else:
+                i += 1
+        payload = {
+            "slip_ref": flags.get("ref"),
+            "amount": flags.get("amount"),
+            "transfer_time": flags.get("time"),
+            "payer_name": flags.get("payer"),
+            "payee_name": flags.get("payee"),
+            "note": flags.get("note"),
+        }
+        payload = {k: v for k, v in payload.items() if v is not None}
+        j = request("POST", f"/api/worker/{jid}/pay-ok",
+                    data=json.dumps(payload).encode(),
+                    headers={"Content-Type": "application/json"})["job"]
+        pay = j.get("payment") or {}
+        pr({"id": j["id"], "status": j["status"], "slip_ref": pay.get("slip_ref"),
+            "amount_due": pay.get("amount_due"), "verified_at": pay.get("verified_at")})
+        return 0
+    if cmd == "pay-reject" and len(args) >= 2:
+        j = request("POST", f"/api/worker/{args[0]}/pay-reject",
+                    data=json.dumps({"reason": " ".join(args[1:])}).encode(),
+                    headers={"Content-Type": "application/json"})["job"]
+        pay = j.get("payment") or {}
+        pr({"id": j["id"], "status": j["status"], "reject_reason": pay.get("reject_reason")})
+        return 0
     print(__doc__); return 2
 
 

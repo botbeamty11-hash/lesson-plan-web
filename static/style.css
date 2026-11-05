@@ -75,3 +75,19 @@ select:focus{outline:none;border-color:var(--pri);background:#fff;box-shadow:0 0
 .opts{display:flex;flex-wrap:wrap;gap:10px 22px;margin:12px 0 6px}
 .chk{display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-weight:500}
 .tag{display:inline-block;background:#eff6ff;color:#1e3a8a;border-radius:999px;padding:2px 10px;font-size:.88rem;margin:2px 0}
+
+/* PromptPay / payment */
+.b-awaiting_payment{background:#ffedd5;color:#9a3412}
+.b-payment_review{background:#e0e7ff;color:#3730a3}
+.b-payment_rejected{background:#fee2e2;color:#991b1b}
+.pay-box{display:grid;grid-template-columns:1.1fr 1fr;gap:20px;align-items:start;margin:18px 0}
+@media(max-width:640px){.pay-box{grid-template-columns:1fr}}
+.pay-amount{background:#fff7ed;border:1px solid #fed7aa;border-radius:14px;padding:18px;text-align:center}
+.pay-amount .k{color:var(--mut);font-size:.95rem}
+.pay-amount .v{font-size:2.4rem;font-weight:700;color:#c2410c;line-height:1.2;margin:6px 0}
+.qr-img{max-width:220px;width:100%;border-radius:12px;border:1px solid var(--bd);background:#fff;padding:8px}
+.qr-placeholder{border:2px dashed #94a3b8;border-radius:14px;padding:28px 16px;text-align:center;background:#f8fafc;min-height:200px;display:flex;flex-direction:column;justify-content:center}
+.qr-placeholder .ic{font-size:2.4rem}
+.slip-thumb{width:56px;height:56px;object-fit:cover;border-radius:8px;border:1px solid var(--bd)}
+.pay-card .slip-form{margin-top:8px}
+main.main-wide{max-width:1100px}

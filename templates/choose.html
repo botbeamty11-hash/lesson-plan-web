@@ -13,8 +13,8 @@
       {% for x in nums %}<option value="{{ x }}">แผนการจัดการเรียนรู้ที่ {{ x }}</option>{% endfor %}
     </select>
     <span class="hint">(ใช้เวลาประมาณ {{ avg|round|int if avg >= 1 else 1 }} นาที ไม่รวมคิว)</span></label>
-  <p class="hint">งานจะเข้าคิวหลังจากกดยืนยันเท่านั้น</p>
-  <div class="actions"><button class="btn big" type="submit">✅ ยืนยันและส่งเข้าคิว</button></div>
+  <p class="hint">ขั้นถัดไปคือชำระเงินด้วย PromptPay ({{ price_per_plan }} บาท/แผน) — งานจะเข้าคิวหลังยืนยันการชำระเงิน</p>
+  <div class="actions"><button class="btn big" type="submit">✅ ยืนยันแล้วไปหน้าชำระเงิน</button></div>
 </form>
 {% endblock %}
 {% block scripts %}<script>

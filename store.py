@@ -9,6 +9,9 @@ JOBS_DIR = os.path.join(DATA_DIR, "jobs")
 TEMPLATE_DIR = os.path.join(DATA_DIR, "template")
 TEMPLATE_PATH = os.path.join(TEMPLATE_DIR, "main.docx")
 LOCK_PATH = os.path.join(DATA_DIR, ".lock")
+SETTINGS_PATH = os.path.join(DATA_DIR, "settings.json")
+QR_IMAGE_PATH = os.path.join(DATA_DIR, "promptpay_qr.png")
+QR_GENERATED_PATH = os.path.join(DATA_DIR, "promptpay_qr_generated.png")
 DEFAULT_MINUTES = 8.0
 OPTIONS = ["ทำภาพประกอบเพิ่ม", "ทำใบงาน/ใบความรู้แนบท้าย", "แก้คำผิดและเนื้อหาที่ผิด"]
 OPT_ILLUSTRATIONS = OPTIONS[0]
@@ -16,6 +19,16 @@ SLOW_FACTOR = 1.5  # from-scratch jobs or extra illustrations take longer (appli
 TZ = timezone(timedelta(hours=7))
 
 DEFAULT_TEMPLATE_SRC = os.path.join(BASE, "default_template", "main.docx")
+
+# Payment defaults (overridable via admin settings)
+DEFAULT_PRICE_PER_PLAN = 10.0
+DEFAULT_PAYEE_NAME = "พิภูษณ ยิ้มหนองโพธิ์"
+DEFAULT_PROMPTPAY_ID = ""
+
+# Job statuses involving payment (not claimable until queued)
+PAYMENT_STATUSES = ("awaiting_payment", "payment_review", "payment_rejected")
+CLAIMABLE_STATUSES = ("queued",)
+SLIP_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".pdf"}
 
 os.makedirs(JOBS_DIR, exist_ok=True)
 os.makedirs(TEMPLATE_DIR, exist_ok=True)
@@ -61,6 +74,346 @@ def save(job):
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(job, f, ensure_ascii=False, indent=2)
     os.replace(tmp, os.path.join(d, "job.json"))
+
+
+def default_settings():
+    return {
+        "price_per_plan": DEFAULT_PRICE_PER_PLAN,
+        "payee_name": DEFAULT_PAYEE_NAME,
+        "promptpay_id": DEFAULT_PROMPTPAY_ID,
+        "qr_image": "promptpay_qr.png" if os.path.isfile(QR_IMAGE_PATH) else None,
+        "qr_decoded_id": None,
+    }
+
+
+def load_settings():
+    s = default_settings()
+    if os.path.isfile(SETTINGS_PATH):
+        try:
+            with open(SETTINGS_PATH, encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                s.update({k: data[k] for k in ("price_per_plan", "payee_name", "promptpay_id",
+                                               "qr_image", "qr_decoded_id") if k in data})
+        except Exception:
+            pass
+    try:
+        s["price_per_plan"] = float(s.get("price_per_plan") or DEFAULT_PRICE_PER_PLAN)
+    except (TypeError, ValueError):
+        s["price_per_plan"] = DEFAULT_PRICE_PER_PLAN
+    s["payee_name"] = (s.get("payee_name") or DEFAULT_PAYEE_NAME).strip() or DEFAULT_PAYEE_NAME
+    s["promptpay_id"] = (s.get("promptpay_id") or "").strip()
+    if not os.path.isfile(QR_IMAGE_PATH):
+        s["qr_image"] = None
+    return s
+
+
+def save_settings(updates):
+    """Merge updates into settings.json under lock. Returns full settings."""
+    with lock():
+        s = load_settings()
+        if "price_per_plan" in updates:
+            try:
+                s["price_per_plan"] = max(0.0, float(updates["price_per_plan"]))
+            except (TypeError, ValueError):
+                pass
+        if "payee_name" in updates and updates["payee_name"] is not None:
+            name = str(updates["payee_name"]).strip()
+            if name:
+                s["payee_name"] = name
+        if "promptpay_id" in updates and updates["promptpay_id"] is not None:
+            s["promptpay_id"] = str(updates["promptpay_id"]).strip()
+        if "qr_image" in updates:
+            s["qr_image"] = updates["qr_image"]
+        if "qr_decoded_id" in updates:
+            s["qr_decoded_id"] = updates["qr_decoded_id"]
+        tmp = SETTINGS_PATH + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(s, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, SETTINGS_PATH)
+        return s
+
+
+def set_qr_image(save_fn, original_name=None):
+    """save_fn(dest) writes uploaded QR image to QR_IMAGE_PATH. Tries to decode PromptPay ID."""
+    os.makedirs(DATA_DIR, exist_ok=True)
+    tmp = QR_IMAGE_PATH + ".tmp"
+    save_fn(tmp)
+    os.replace(tmp, QR_IMAGE_PATH)
+    decoded_id = None
+    payloads = []
+    try:
+        from promptpay import decode_qr_from_image, extract_promptpay_id_from_payload
+        payloads = decode_qr_from_image(QR_IMAGE_PATH)
+        for pl in payloads:
+            decoded_id = extract_promptpay_id_from_payload(pl)
+            if decoded_id:
+                break
+    except Exception:
+        pass
+    updates = {"qr_image": "promptpay_qr.png", "qr_decoded_id": decoded_id}
+    # If upload decoded an ID and settings ID empty, fill it
+    s = load_settings()
+    if decoded_id and not s.get("promptpay_id"):
+        updates["promptpay_id"] = decoded_id
+    return save_settings(updates)
+
+
+def clear_qr_image():
+    if os.path.isfile(QR_IMAGE_PATH):
+        try:
+            os.remove(QR_IMAGE_PATH)
+        except OSError:
+            pass
+    return save_settings({"qr_image": None, "qr_decoded_id": None})
+
+
+def qr_image_path_for_display(amount=None):
+    """Return (path, source) where source is 'uploaded'|'generated'|None.
+    Prefer uploaded image; else generate from promptpay_id if set."""
+    if os.path.isfile(QR_IMAGE_PATH):
+        return QR_IMAGE_PATH, "uploaded"
+    s = load_settings()
+    pid = s.get("promptpay_id") or ""
+    if not pid:
+        return None, None
+    try:
+        from promptpay import generate_qr_png
+        ok = generate_qr_png(pid, QR_GENERATED_PATH, amount=amount)
+        if ok and os.path.isfile(QR_GENERATED_PATH):
+            return QR_GENERATED_PATH, "generated"
+    except Exception:
+        pass
+    return None, None
+
+
+def amount_due_for(job, settings=None):
+    """10 บาท × number of plans the teacher chose (effective_plan_count)."""
+    settings = settings or load_settings()
+    n = plan_count_of(job)
+    price = float(settings.get("price_per_plan") or DEFAULT_PRICE_PER_PLAN)
+    return round(price * n, 2), n, price
+
+
+def _init_payment(job, settings=None):
+    settings = settings or load_settings()
+    amount, n, price = amount_due_for(job, settings)
+    job["payment"] = {
+        "amount_due": amount,
+        "plan_count_billed": n,
+        "price_per_plan": price,
+        "payee_name": settings.get("payee_name") or DEFAULT_PAYEE_NAME,
+        "promptpay_id": settings.get("promptpay_id") or settings.get("qr_decoded_id") or "",
+        "requested_at": now_iso(),
+        "slip_file": None,
+        "slip_original_name": None,
+        "slip_uploaded_at": None,
+        "slip_qr_payload": None,
+        "slip_ref": None,
+        "verified_at": None,
+        "verified_by": None,
+        "payer_name": None,
+        "payee_name_on_slip": None,
+        "amount_on_slip": None,
+        "transfer_time": None,
+        "note": None,
+        "reject_reason": None,
+        "duplicate_ref_flag": False,
+    }
+    return job
+
+
+def begin_payment(job_id):
+    """Move a ready job into awaiting_payment and stamp amount due."""
+    with lock():
+        j = load(job_id)
+        if not j:
+            raise KeyError(job_id)
+        if j["status"] in ("awaiting_payment", "payment_review", "payment_rejected",
+                           "queued", "processing", "done"):
+            # already past choice; ensure payment block exists
+            if not j.get("payment"):
+                _init_payment(j)
+                save(j)
+            return j
+        if j["status"] != "awaiting_choice":
+            _init_payment(j)
+            j["status"] = "awaiting_payment"
+            save(j)
+        return j
+
+
+def find_slip_ref(slip_ref, exclude_job_id=None):
+    """Return job id that already used this slip_ref, or None."""
+    if not slip_ref:
+        return None
+    key = str(slip_ref).strip()
+    if not key:
+        return None
+    for j in all_jobs():
+        if exclude_job_id and j["id"] == exclude_job_id:
+            continue
+        p = j.get("payment") or {}
+        if (p.get("slip_ref") or "").strip() == key:
+            return j["id"]
+    return None
+
+
+def save_slip(job_id, save_fn, original_name):
+    """Teacher uploads transfer slip. Status -> payment_review. Returns job."""
+    ext = os.path.splitext(original_name or "")[1].lower()
+    if ext not in SLIP_EXTS:
+        raise ValueError("slip must be an image or pdf")
+    with lock():
+        j = load(job_id)
+        if not j:
+            raise KeyError(job_id)
+        if j["status"] not in ("awaiting_payment", "payment_rejected", "payment_review"):
+            raise ValueError(f"cannot upload slip in status {j['status']}")
+        if not j.get("payment"):
+            _init_payment(j)
+        d = job_dir(job_id)
+        stored = "slip" + ext
+        dest = os.path.join(d, stored)
+        save_fn(dest)
+        pay = j["payment"]
+        pay["slip_file"] = stored
+        pay["slip_original_name"] = original_name
+        pay["slip_uploaded_at"] = now_iso()
+        pay["reject_reason"] = None
+        pay["slip_qr_payload"] = None
+        # best-effort decode QR on slip
+        try:
+            from promptpay import decode_qr_from_image
+            payloads = decode_qr_from_image(dest)
+            if payloads:
+                pay["slip_qr_payload"] = payloads[0]
+        except Exception:
+            pass
+        j["files"]["slip"] = stored
+        j["status"] = "payment_review"
+        save(j)
+        return j
+
+
+def approve_payment(job_id, *, slip_ref=None, amount=None, transfer_time=None,
+                    payer_name=None, payee_name=None, note=None, by="worker"):
+    """Verify payment and put job in the work queue. Raises ValueError on duplicate ref."""
+    with lock():
+        j = load(job_id)
+        if not j:
+            raise KeyError(job_id)
+        if j["status"] not in ("payment_review", "payment_rejected", "awaiting_payment"):
+            if j["status"] == "queued":
+                return j
+            raise ValueError(f"cannot approve payment in status {j['status']}")
+        if not j.get("payment"):
+            _init_payment(j)
+        pay = j["payment"]
+        ref = (slip_ref if slip_ref is not None else pay.get("slip_ref") or "").strip() or None
+        if ref:
+            dup = None
+            for other in all_jobs():
+                if other["id"] == job_id:
+                    continue
+                op = other.get("payment") or {}
+                if (op.get("slip_ref") or "").strip() == ref:
+                    dup = other["id"]
+                    break
+            if dup:
+                pay["duplicate_ref_flag"] = True
+                save(j)
+                raise ValueError(f"duplicate slip_ref already used by job {dup}")
+            pay["slip_ref"] = ref
+        if amount is not None and amount != "":
+            try:
+                pay["amount_on_slip"] = float(amount)
+            except (TypeError, ValueError):
+                pay["amount_on_slip"] = amount
+        if transfer_time is not None:
+            pay["transfer_time"] = transfer_time
+        if payer_name is not None:
+            pay["payer_name"] = payer_name
+        if payee_name is not None:
+            pay["payee_name_on_slip"] = payee_name
+        if note is not None:
+            pay["note"] = note
+        pay["verified_at"] = now_iso()
+        pay["verified_by"] = by
+        pay["reject_reason"] = None
+        pay["duplicate_ref_flag"] = False
+        j["status"] = "queued"
+        j["queued_at"] = now_iso()
+        save(j)
+        return j
+
+
+def reject_payment(job_id, reason, by="worker"):
+    with lock():
+        j = load(job_id)
+        if not j:
+            raise KeyError(job_id)
+        if j["status"] not in ("payment_review", "awaiting_payment", "queued"):
+            # allow reject from payment_review primarily; also undo queued if needed
+            if j["status"] == "payment_rejected":
+                return j
+            raise ValueError(f"cannot reject payment in status {j['status']}")
+        if not j.get("payment"):
+            _init_payment(j)
+        pay = j["payment"]
+        pay["reject_reason"] = (reason or "").strip() or "สลิปไม่ถูกต้อง"
+        pay["verified_at"] = now_iso()
+        pay["verified_by"] = by
+        # keep slip file so teacher can see what was rejected; they may re-upload
+        j["status"] = "payment_rejected"
+        save(j)
+        return j
+
+
+def payment_jobs(status=None):
+    """Jobs that are in a payment-related state (or any with a payment block if status set)."""
+    out = []
+    for j in all_jobs():
+        st = j["status"]
+        if status:
+            if st == status:
+                out.append(j)
+        elif st in PAYMENT_STATUSES or (j.get("payment") and st in ("queued", "processing", "done")):
+            out.append(j)
+    return out
+
+
+def payment_totals():
+    """Simple totals: paid today / all time (jobs approved into the work queue)."""
+    today = datetime.now(TZ).date().isoformat()
+    paid_all = paid_today = 0.0
+    count_all = count_today = 0
+    for j in all_jobs():
+        pay = j.get("payment") or {}
+        if not pay.get("verified_at"):
+            continue
+        # Count only when payment was approved (job left payment_* for the work pipeline)
+        if j["status"] in ("awaiting_payment", "payment_review", "payment_rejected"):
+            continue
+        try:
+            amt = float(pay.get("amount_due") or 0)
+        except (TypeError, ValueError):
+            amt = 0.0
+        paid_all += amt
+        count_all += 1
+        try:
+            vd = parse_iso(pay["verified_at"]).date().isoformat()
+        except Exception:
+            vd = (pay["verified_at"] or "")[:10]
+        if vd == today:
+            paid_today += amt
+            count_today += 1
+    return {
+        "paid_today": round(paid_today, 2),
+        "paid_all_time": round(paid_all, 2),
+        "count_today": count_today,
+        "count_all_time": count_all,
+    }
 
 
 def all_jobs():
@@ -109,7 +462,7 @@ def create_job(uploads, fields, note, plan_counter=None, instructions=None, opti
     files = {"source": None, "source_original_name": None,
              "template": None, "template_original_name": None,
              "template_is_default": False,
-             "result_docx": None, "result_pdf": None}
+             "result_docx": None, "result_pdf": None, "slip": None}
     for kind in ("template", "source"):
         if kind in uploads and uploads[kind]:
             fname, save_fn = uploads[kind]
@@ -148,8 +501,13 @@ def create_job(uploads, fields, note, plan_counter=None, instructions=None, opti
         except Exception:
             job["plan_count"], job["plan_numbers"] = 1, []
     job["effective_plan_count"] = job["plan_count"]
+    job["payment"] = None
     if job["plan_count"] > 1:
-        job["status"] = "awaiting_choice"  # submitter must choose one plan vs all before queuing
+        job["status"] = "awaiting_choice"  # submitter must choose one plan vs all before paying
+    else:
+        # single plan: go straight to payment (not the work queue)
+        _init_payment(job)
+        job["status"] = "awaiting_payment"
     with lock():
         save(job)
     return job
@@ -168,8 +526,8 @@ def set_plan_choice(job_id, mode, selected=None):
         else:
             j["plan_mode"], j["plan_selected"] = "all", None
             j["effective_plan_count"] = max(1, int(j.get("plan_count") or 1))
-        j["status"] = "queued"
-        j["queued_at"] = now_iso()
+        _init_payment(j)
+        j["status"] = "awaiting_payment"
         save(j)
         return j
 
@@ -179,7 +537,7 @@ def with_paths(job):
     j = dict(job)
     j["paths"] = {k: (os.path.join(d, v) if v else None)
                   for k, v in job["files"].items()
-                  if k in ("source", "template", "result_docx", "result_pdf")}
+                  if k in ("source", "template", "result_docx", "result_pdf", "slip")}
     j["paths"]["job_dir"] = d
     return j
 
@@ -200,6 +558,8 @@ def claim(job_id):
         j = load(job_id)
         if not j:
             raise KeyError(job_id)
+        if j["status"] != "queued":
+            raise ValueError(f"job {job_id} is {j['status']}, not queued (unpaid jobs cannot be claimed)")
         j["status"] = "processing"
         j["started_at"] = j["started_at"] or now_iso()
         save(j)
@@ -286,6 +646,7 @@ def status_info(job_id):
     avg = avg_minutes_per_plan(jobs)
     now = datetime.now(TZ)
     pc = plan_count_of(j)
+    pay = j.get("payment") or {}
     info = {"id": j["id"], "status": j["status"], "created_at": j["created_at"],
             "started_at": j["started_at"], "finished_at": j["finished_at"],
             "error": j["error"], "avg_minutes_per_plan": round(avg, 1),
@@ -299,6 +660,18 @@ def status_info(job_id):
             "job_minutes": round(pc * avg * eta_factor(j), 1),
             "has_docx": bool(j["files"]["result_docx"]),
             "has_pdf": bool(j["files"]["result_pdf"]),
+            "has_slip": bool((j.get("files") or {}).get("slip") or pay.get("slip_file")),
+            "payment": {
+                "amount_due": pay.get("amount_due"),
+                "plan_count_billed": pay.get("plan_count_billed"),
+                "price_per_plan": pay.get("price_per_plan"),
+                "payee_name": pay.get("payee_name"),
+                "requested_at": pay.get("requested_at"),
+                "slip_uploaded_at": pay.get("slip_uploaded_at"),
+                "reject_reason": pay.get("reject_reason"),
+                "verified_at": pay.get("verified_at"),
+                "slip_ref": pay.get("slip_ref"),
+            } if pay else None,
             "queue_position": None, "jobs_ahead": None, "plans_ahead": None,
             "eta_minutes": None}
     processing = [x for x in jobs if x["status"] == "processing"]

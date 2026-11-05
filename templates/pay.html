@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}ชำระเงิน {{ job.id }}{% endblock %}
+{% block content %}
+<div class="card pay-card">
+  <h1>💳 ชำระเงินด้วย PromptPay</h1>
+  <p class="sub">งานจะเข้าคิวจัดทำแผน <b>หลังจากยืนยันการชำระเงินแล้วเท่านั้น</b></p>
+
+  {% if job.status == 'payment_rejected' %}
+  <div class="flash">สลิปไม่ผ่านการตรวจสอบ: <b>{{ pay.reject_reason or 'กรุณาอัปโหลดสลิปใหม่' }}</b></div>
+  {% endif %}
+
+  <div class="pay-box">
+    <div class="pay-amount">
+      <div class="k">ยอดที่ต้องชำระ</div>
+      <div class="v">{{ '%.0f'|format(pay.amount_due) if pay.amount_due == (pay.amount_due|int) else '%.2f'|format(pay.amount_due) }} บาท</div>
+      <div class="hint">{{ pay.price_per_plan }} บาท × {{ pay.plan_count_billed }} แผน
+        {% if plan_choice %} · {{ plan_choice }}{% endif %}</div>
+    </div>
+    <div class="pay-qr">
+      {% if has_qr %}
+      <img src="/job/{{ job.id }}/pay/qr" alt="PromptPay QR" class="qr-img">
+      <p class="hint">{% if qr_src == 'generated' %}QR สร้างจาก PromptPay ID{% else %}สแกน QR เพื่อโอนเงิน{% endif %}</p>
+      {% else %}
+      <div class="qr-placeholder">
+        <div class="ic">📱</div>
+        <p><b>ยังไม่มีรูป QR PromptPay</b></p>
+        <p class="hint">เจ้าของระบบยังไม่อัปโหลด QR — กรุณาโอนตามชื่อบัญชีด้านล่าง แล้วอัปโหลดสลิป</p>
+      </div>
+      {% endif %}
+    </div>
+    <div class="pay-meta">
+      <dl class="meta">
+        <dt>ชื่อบัญชีผู้รับ</dt><dd><b>{{ pay.payee_name }}</b></dd>
+        <dt>รหัสงาน</dt><dd class="mono">{{ job.id }}</dd>
+        <dt>สร้างคำขอเมื่อ</dt><dd>{{ (pay.requested_at or job.created_at)[:19].replace('T',' ') }}</dd>
+      </dl>
+      <p class="note">⚠️ ชื่อผู้รับบนสลิปต้องตรงกับ <b>{{ pay.payee_name }}</b> และยอดต้องเท่ากับ <b>{{ pay.amount_due }} บาท</b></p>
+    </div>
+  </div>
+
+  <form method="post" enctype="multipart/form-data" class="slip-form" id="slipForm">
+    <label>อัปโหลดสลิปการโอนเงิน <span class="req">*</span></label>
+    <div class="drop" id="slipDrop">
+      <div class="ic">🧾</div>
+      <div>ลากไฟล์สลิปมาวาง หรือคลิกเพื่อเลือก</div>
+      <div class="fn" id="slipFn"></div>
+      <input type="file" name="slip" id="slipIn" accept=".jpg,.jpeg,.png,.webp,.gif,.pdf,image/*" required>
+    </div>
+    <p class="hint">รองรับ .jpg .png .webp .gif .pdf (สูงสุด {{ slip_max_mb }} MB)</p>
+    <div class="actions">
+      <button class="btn big" type="submit">📤 ส่งสลิปเพื่อตรวจสอบ</button>
+      <a class="btn sec" href="/job/{{ job.id }}">ดูสถานะงาน</a>
+    </div>
+  </form>
+</div>
+{% endblock %}
+{% block scripts %}<script>
+const drop=document.getElementById('slipDrop'), inp=document.getElementById('slipIn'), fn=document.getElementById('slipFn');
+drop.addEventListener('click',()=>inp.click());
+['dragenter','dragover'].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.add('over')}));
+['dragleave','drop'].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.remove('over')}));
+drop.addEventListener('drop',ev=>{if(ev.dataTransfer.files.length){inp.files=ev.dataTransfer.files;update()}});
+inp.addEventListener('change',update);
+function update(){if(inp.files&&inp.files[0]){fn.textContent=inp.files[0].name;drop.classList.add('has')}else{fn.textContent='';drop.classList.remove('has')}}
+</script>{% endblock %}

@@ -7,10 +7,11 @@
   <p class="sub" id="subline">กรุณาเปิดหน้านี้ไว้ ระบบจะอัปเดตสถานะอัตโนมัติ</p>
   <span class="badge b-queued" id="badge">รอคิว</span>
   <p class="plans-found" id="plans"{% if plan_count <= 1 and not plan_choice %} style="display:none"{% endif %}>{% if job.get('plan_count', 1) > 1 %}พบ {{ job.plan_count }} แผนในไฟล์ข้อมูล{% endif %}{% if plan_choice %} · {{ plan_choice }}{% endif %}</p>
-  <div class="steps">
-    <div class="step" data-s="queued"><div class="dot">1</div>รอคิว</div>
-    <div class="step" data-s="processing"><div class="dot">2</div>กำลังทำ</div>
-    <div class="step" data-s="done"><div class="dot">3</div>เสร็จแล้ว</div>
+  <div class="steps" id="steps">
+    <div class="step" data-s="payment_review"><div class="dot">1</div>รอตรวจสลิป</div>
+    <div class="step" data-s="queued"><div class="dot">2</div>รอคิว</div>
+    <div class="step" data-s="processing"><div class="dot">3</div>กำลังทำ</div>
+    <div class="step" data-s="done"><div class="dot">4</div>เสร็จแล้ว</div>
   </div>
   <div class="stats" id="stats">
     <div class="stat"><div class="v" id="pos">-</div><div class="k">ลำดับคิว</div></div>
@@ -31,6 +32,9 @@
     {% if instructions %}<dt>คำสั่งเพิ่มเติมถึงผู้จัดทำ</dt><dd style="white-space:pre-wrap">{{ instructions }}</dd>{% endif %}
     {% if job.get('options') %}<dt>ตัวเลือกเพิ่มเติม</dt><dd>{% for o in job.options %}<span class="tag">✔ {{ o }}</span> {% endfor %}</dd>{% endif %}
     {% if plan_choice %}<dt>แผนที่จะจัดทำ</dt><dd>{{ plan_choice }}</dd>{% endif %}
+    {% if job.get('payment') %}<dt>ค่าบริการ</dt><dd>{{ job.payment.amount_due }} บาท ({{ job.payment.price_per_plan }} × {{ job.payment.plan_count_billed }} แผน)</dd>
+    {% if job.payment.slip_file %}<dt>สลิป</dt><dd><a href="/job/{{ job.id }}/slip" target="_blank">ดูสลิปที่อัปโหลด</a>{% if job.payment.slip_uploaded_at %} · {{ job.payment.slip_uploaded_at[:16].replace('T',' ') }}{% endif %}</dd>{% endif %}
+    {% endif %}
     {% if teach_date %}<dt>สอนวันที่</dt><dd>{{ teach_date }}</dd>{% endif %}
     {% for k, v in job.fields.items() %}{% if v and not k.startswith('teach_') %}<dt>{{ labels.get(k, k) }}</dt><dd>{{ v }}</dd>{% endif %}{% endfor %}
   </dl>
@@ -39,11 +43,24 @@
 {% endblock %}
 {% block scripts %}<script>
 const ID={{ job.id|tojson }};const $=i=>document.getElementById(i);
-const ORDER=['queued','processing','done'];
+const ORDER=['payment_review','queued','processing','done'];
 function render(d){
   const s=d.status;$('badge').className='badge b-'+s;$('badge').textContent=d.status_th;
-  document.querySelectorAll('.step').forEach(el=>{const i=ORDER.indexOf(el.dataset.s),c=ORDER.indexOf(s==='failed'?'processing':s);el.classList.toggle('on',i<=c)});
-  if(s==='queued'||s==='processing'){
+  document.querySelectorAll('.step').forEach(el=>{
+    let cur=s; if(s==='failed')cur='processing';
+    if(s==='awaiting_payment'||s==='payment_rejected')cur='payment_review';
+    const i=ORDER.indexOf(el.dataset.s),c=ORDER.indexOf(cur);
+    el.classList.toggle('on',c>=0 && i<=c);
+  });
+  if(s==='payment_review'){
+    $('vis').innerHTML='<div class="spinner"></div>';
+    $('headline').textContent='กำลังตรวจสอบสลิปการโอนเงิน...';
+    $('subline').textContent='ระบบได้รับสลิปแล้ว รอผู้ตรวจสอบยืนยัน — งานจะเข้าคิวหลังชำระเงินผ่าน';
+    $('stats').style.display='none';
+    $('dl').style.display='none';
+    if(d.payment&&d.payment.amount_due){$('plans').textContent='ยอดชำระ '+d.payment.amount_due+' บาท';$('plans').style.display='';}
+  } else if(s==='queued'||s==='processing'){
+    $('vis').innerHTML='<div class="spinner"></div>';
     $('headline').textContent=s==='queued'?'กำลังรอคิว...':'กำลังจัดทำแผนการจัดการเรียนรู้...';
     $('subline').textContent='กรุณาเปิดหน้านี้ไว้ ระบบจะอัปเดตสถานะอัตโนมัติทุก 5 วินาที';
     $('pos').textContent=s==='queued'?d.queue_position:'กำลังทำ';
@@ -53,7 +70,7 @@ function render(d){
     if(d.from_scratch)pl.push('ไม่มีไฟล์ข้อมูล จัดทำจากคำสั่งเพิ่มเติม');
     pl.push('ประมาณ '+Math.max(1,Math.round(d.job_minutes))+' นาทีสำหรับงานนี้ ('+d.plan_count+' แผน × '+d.avg_minutes_per_plan+' นาที'+(d.eta_factor>1?' × '+d.eta_factor+' เพราะ'+(d.from_scratch?'ไม่มีไฟล์ข้อมูล':'ทำภาพประกอบเพิ่ม'):'')+')');
     $('plans').textContent=pl.join(' · ');$('plans').style.display='';
-    $('stats').style.display='';
+    $('stats').style.display='';$('dl').style.display='none';
   } else {
     $('stats').style.display='none';
     if(s==='done'){
@@ -62,6 +79,8 @@ function render(d){
       let h='';if(d.has_docx)h+=`<a class="btn big" href="/job/${ID}/download/docx">⬇️ ดาวน์โหลด Word (.docx)</a>`;
       if(d.has_pdf)h+=`<a class="btn big sec" href="/job/${ID}/download/pdf">⬇️ ดาวน์โหลด PDF</a>`;
       $('dl').innerHTML=h;$('dl').style.display='flex';$('keep').style.display='';
+    } else if(s==='awaiting_payment'||s==='payment_rejected'){
+      location.href='/job/'+ID+'/pay';return true;
     } else {
       $('vis').innerHTML='<div class="done-ic">⚠️</div>';$('headline').textContent='เกิดข้อผิดพลาด';
       $('subline').textContent=d.error||'ไม่สามารถดำเนินการได้';

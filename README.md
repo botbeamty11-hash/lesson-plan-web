@@ -25,7 +25,8 @@ worker ภายนอก (ผู้ช่วย AI) ดึงงานไปจ
 | LP_DATA_DIR | (ไม่บังคับ) โฟลเดอร์ข้อมูล ค่าเริ่มต้น `./data` |
 
 ## หน้าเว็บ
-- `/` ส่งงาน · `/job/<id>` หน้ารอ/สถานะ (poll ทุก 5 วิ) · `/admin` รายการงาน + แม่แบบสำรองภายใน
+- `/` ส่งงาน · `/job/<id>/choose` เลือกจำนวนแผน · `/job/<id>/pay` ชำระ PromptPay + อัปโหลดสลิป · `/job/<id>` สถานะ (poll ทุก 5 วิ) · `/admin` งาน + การเงิน + ตั้งค่า QR/ราคา
+- งานเข้าคิว `queued` **หลังตรวจสลิปผ่านเท่านั้น** · ราคา = ราคาต่อแผน (ค่าเริ่มต้น 10) × จำนวนแผนที่ครูเลือก
 - `GET /api/job/<id>` สถานะ JSON: status, queue_position, jobs_ahead, eta_minutes, avg_minutes, has_docx, has_pdf
 - `GET /job/<id>/download/docx|pdf`
 
@@ -34,7 +35,10 @@ ETA = (จำนวนงานข้างหน้า + 1) × เวลาเ�
 
 ## โครงสร้างข้อมูล
     data/template/main.docx           แม่แบบสำรองภายใน (ใช้เฉพาะงานที่ไม่มีฟอร์มแนบ; template_is_default=true)
-    data/jobs/<id>/job.json           ข้อมูลงาน (status: queued|processing|done|failed)
+    data/jobs/<id>/job.json           ข้อมูลงาน (status: awaiting_choice|awaiting_payment|payment_review|payment_rejected|queued|processing|done|failed)
+    data/jobs/<id>/slip.<ext>         สลิป PromptPay ที่ครูอัปโหลด
+    data/settings.json                ตั้งค่าราคา / ชื่อผู้รับ / PromptPay ID
+    data/promptpay_qr.png             รูป QR ที่แอดมินอัปโหลด
     data/jobs/<id>/source.<ext>       ไฟล์ต้นฉบับที่อัปโหลด
     data/jobs/<id>/template.<ext>     ฟอร์มโรงเรียนที่ผู้ใช้อัปโหลด (paths.template)
     data/jobs/<id>/result.docx/.pdf   ผลลัพธ์
@@ -55,7 +59,7 @@ ETA = (จำนวนงานข้างหน้า + 1) × เวลาเ�
 - Health check path: `/healthz`
 - Env vars: `ADMIN_PASSWORD`, `WORKER_TOKEN`, `SECRET_KEY` (บังคับ), `WEBHOOK_URL` (ไม่บังคับ)
 - มี `render.yaml` (Blueprint) ให้ด้วย
-- ข้อควรรู้ของ free plan: ดิสก์ชั่วคราว (งาน/ไฟล์หายเมื่อ redeploy/restart) และหลับเมื่อว่าง ~15 นาที
+- ข้อควรรู้ของ free plan: ดิสก์ชั่วคราว **ไม่มี persistent disk ใน render.yaml** (งาน/สลิป/รูป QR/settings.json หายเมื่อ redeploy/restart) และหลับเมื่อว่าง ~15 นาที
   (ปลุกครั้งแรก ~1 นาที) → หน้าเสร็จแล้วจะเตือนให้ดาวน์โหลดทันที; `default_template/main.docx`
   จะถูกคัดลอกไปที่ data/template/ อัตโนมัติตอนบูต
 
@@ -68,6 +72,10 @@ ETA = (จำนวนงานข้างหน้า + 1) × เวลาเ�
     python3 remote_worker.py fail <id> "ข้อความ"
     python3 remote_worker.py requeue <id>
     python3 remote_worker.py health
+    python3 remote_worker.py payments [--status payment_review]
+    python3 remote_worker.py slip <id> [outfile]
+    python3 remote_worker.py pay-ok <id> --ref R --amount A --time T --payer N --payee N --note N
+    python3 remote_worker.py pay-reject <id> "เหตุผล"
 
 ## Worker HTTP API (ต้องมีโทเคน `Authorization: Bearer <WORKER_TOKEN>`)
 | Method | Path | หมายเหตุ |
@@ -80,6 +88,10 @@ ETA = (จำนวนงานข้างหน้า + 1) × เวลาเ�
 | GET | /api/worker/<id>/file/<template\|source\|result_docx\|result_pdf> | ดาวน์โหลดไฟล์ของงาน |
 | POST | /api/worker/<id>/complete | multipart `docx` (บังคับ) + `pdf` (ไม่บังคับ) |
 | POST | /api/worker/<id>/fail | form หรือ JSON `message` |
+| GET | /api/worker/payments[?status=payment_review] | งานรอตรวจสลิป + settings สรุป |
+| GET | /api/worker/<id>/file/slip | ดาวน์โหลดสลิป |
+| POST | /api/worker/<id>/pay-ok | JSON: slip_ref, amount, transfer_time, payer_name, payee_name, note → queued |
+| POST | /api/worker/<id>/pay-reject | JSON/form: reason |
 | GET | /healthz | ไม่ต้องใช้โทเคน |
 
 ตัวอย่าง curl:

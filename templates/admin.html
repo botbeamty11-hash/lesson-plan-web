@@ -8,6 +8,104 @@
 <form method="post" enctype="multipart/form-data"><input type="hidden" name="action" value="upload">
 <label>อัปโหลด/แทนที่แม่แบบสำรอง (.docx)</label><input type="file" name="template" accept=".docx" required>
 <div class="actions"><button class="btn">อัปโหลดแม่แบบ</button></div></form></div>
+
+<div class="card" id="settings">
+  <h3 style="margin-top:0">⚙️ ตั้งค่า PromptPay / ราคา</h3>
+  <div class="stats" style="margin-top:0">
+    <div class="stat"><div class="v">{{ totals.paid_today }}฿</div><div class="k">รับวันนี้ ({{ totals.count_today }} รายการ)</div></div>
+    <div class="stat"><div class="v">{{ totals.paid_all_time }}฿</div><div class="k">รับทั้งหมด ({{ totals.count_all_time }} รายการ)</div></div>
+    <div class="stat"><div class="v">{{ settings.price_per_plan }}฿</div><div class="k">ราคาต่อแผน</div></div>
+  </div>
+  <form method="post">
+    <input type="hidden" name="action" value="settings">
+    <div class="grid">
+      <div><label>ราคาต่อแผน (บาท)</label>
+        <input type="number" name="price_per_plan" min="0" step="1" value="{{ settings.price_per_plan }}" required></div>
+      <div><label>ชื่อบัญชีผู้รับ (ต้องตรงกับสลิป)</label>
+        <input type="text" name="payee_name" value="{{ settings.payee_name }}" required></div>
+      <div class="full"><label>PromptPay ID (เบอร์โทร / เลขบัตร / e-wallet) <span class="opt">ว่างได้ — ใช้สร้าง QR อัตโนมัติถ้ายังไม่อัปโหลดรูป</span></label>
+        <input type="text" name="promptpay_id" value="{{ settings.promptpay_id }}" placeholder="เช่น 08xxxxxxxx"></div>
+    </div>
+    <div class="actions"><button class="btn">💾 บันทึกการตั้งค่า</button></div>
+  </form>
+  <hr style="border:none;border-top:1px solid var(--bd);margin:22px 0">
+  <label>รูป QR PromptPay</label>
+  {% if has_qr %}
+  <p><img src="/admin/qr" alt="PromptPay QR" class="qr-img" style="max-width:180px">
+    {% if settings.qr_decoded_id %}<span class="hint"> · ถอดรหัสได้ …{{ settings.qr_decoded_id[-4:] }}</span>{% endif %}</p>
+  {% else %}
+  <p class="flash warn">ยังไม่มีรูป QR — หน้าชำระเงินจะแสดงตัววาง และจะสร้าง QR จาก PromptPay ID ถ้ามีค่า</p>
+  {% endif %}
+  <form method="post" enctype="multipart/form-data" style="display:inline">
+    <input type="hidden" name="action" value="upload_qr">
+    <input type="file" name="qr_image" accept=".png,.jpg,.jpeg,.webp,.gif,image/*" required>
+    <div class="actions"><button class="btn">อัปโหลด/แทนที่ QR</button></div>
+  </form>
+  {% if has_qr %}
+  <form method="post" style="display:inline" onsubmit="return confirm('ลบรูป QR?')">
+    <input type="hidden" name="action" value="clear_qr">
+    <button class="btn sec">ลบรูป QR</button>
+  </form>
+  {% endif %}
+</div>
+
+<div class="card" id="payments">
+  <h3 style="margin-top:0">💰 การชำระเงิน</h3>
+  <p class="hint">กรอง:
+    <a href="/admin#payments">ทั้งหมดที่เกี่ยวกับจ่าย</a> ·
+    <a href="/admin?pay_status=payment_review#payments">รอตรวจสลิป</a> ·
+    <a href="/admin?pay_status=awaiting_payment#payments">รอชำระ</a> ·
+    <a href="/admin?pay_status=payment_rejected#payments">ถูกปฏิเสธ</a> ·
+    <a href="/admin?pay_status=queued#payments">เข้าคิวแล้ว</a>
+    {% if pay_filter %} · กำลังกรอง: <b>{{ status_th.get(pay_filter, pay_filter) }}</b>{% endif %}
+  </p>
+  <div style="overflow-x:auto"><table>
+    <tr><th>รหัสงาน</th><th>สถานะ</th><th>ผู้สอน</th><th>แผน</th><th>ยอด</th><th>สลิป</th><th>ผลตรวจ</th><th>จัดการ</th></tr>
+    {% for j in pay_jobs %}
+    {% set p = j.payment or {} %}
+    <tr>
+      <td class="mono"><a href="/job/{{ j.id }}">{{ j.id }}</a></td>
+      <td><span class="badge b-{{ j.status }}">{{ status_th.get(j.status, j.status) }}</span></td>
+      <td>{{ j.fields.teacher or '-' }}</td>
+      <td>{{ p.plan_count_billed or j.effective_plan_count or 1 }}</td>
+      <td>{{ p.amount_due or '-' }}฿</td>
+      <td>{% if p.slip_file %}
+        <a href="/job/{{ j.id }}/slip" target="_blank" title="ขยาย"><img src="/job/{{ j.id }}/slip" alt="slip" class="slip-thumb"></a>
+        {% else %}-{% endif %}</td>
+      <td style="max-width:220px;font-size:.88rem">
+        {% if p.verified_at and j.status not in ('payment_rejected',) %}
+          ✅ {{ p.verified_by or '' }} · ref={{ p.slip_ref or '-' }}
+          {% if p.amount_on_slip %} · {{ p.amount_on_slip }}฿{% endif %}
+          {% if p.note %}<div class="hint">{{ p.note }}</div>{% endif %}
+        {% elif j.status == 'payment_rejected' %}
+          ❌ {{ p.reject_reason or '' }}
+        {% elif j.status == 'payment_review' %}รอบอท/แอดมินตรวจ
+        {% else %}-{% endif %}
+        {% if p.duplicate_ref_flag %}<div class="flash" style="margin:4px 0;padding:6px">⚠ ref ซ้ำ</div>{% endif %}
+      </td>
+      <td>
+        {% if j.status in ('payment_review', 'payment_rejected', 'awaiting_payment') %}
+        <form method="post" style="margin-bottom:6px">
+          <input type="hidden" name="action" value="pay_approve">
+          <input type="hidden" name="job_id" value="{{ j.id }}">
+          <input type="text" name="slip_ref" placeholder="เลขที่อ้างอิง" style="margin-bottom:4px">
+          <input type="text" name="amount" placeholder="ยอดบนสลิป" style="margin-bottom:4px">
+          <input type="text" name="note" placeholder="หมายเหตุ" style="margin-bottom:4px">
+          <button class="btn" style="padding:6px 12px;font-size:.85rem">✅ อนุมัติ</button>
+        </form>
+        <form method="post">
+          <input type="hidden" name="action" value="pay_reject">
+          <input type="hidden" name="job_id" value="{{ j.id }}">
+          <input type="text" name="reason" placeholder="เหตุผลปฏิเสธ" required style="margin-bottom:4px">
+          <button class="btn sec" style="padding:6px 12px;font-size:.85rem">❌ ปฏิเสธ</button>
+        </form>
+        {% else %}-{% endif %}
+      </td>
+    </tr>
+    {% else %}<tr><td colspan="8" class="hint">ยังไม่มีรายการชำระเงิน</td></tr>{% endfor %}
+  </table></div>
+</div>
+
 <div class="card"><h3 style="margin-top:0">งานล่าสุด</h3>
 <div style="overflow-x:auto"><table><tr><th>รหัสงาน</th><th>สถานะ</th><th>ส่งเมื่อ</th><th>ผู้สอน</th><th>ฟอร์มโรงเรียน</th><th>แผนที่</th><th>ไฟล์ข้อมูล</th><th>คำสั่ง / ตัวเลือก</th></tr>
 {% for j in jobs %}<tr><td class="mono"><a href="/job/{{ j.id }}">{{ j.id }}</a></td><td><span class="badge b-{{ j.status }}">{{ status_th[j.status] }}</span></td>
