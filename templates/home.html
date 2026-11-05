@@ -30,6 +30,7 @@
 {% endblock %}
 {% block content %}
 <section class="home-top">
+  <p class="free-pill" role="status"><span class="free-pill-dot" aria-hidden="true"></span>ทดลองใช้ฟรี</p>
   <h1>ครูดี ช่วยงานครู</h1>
   <p class="home-sub">เลือกบริการด้านล่าง — สั้น ๆ ชัด ๆ</p>
 </section>
@@ -46,6 +47,7 @@
   {% for group, services in groups %}
     {% set ikey = brand.group_img_key(group) %}
     <a class="tile tint-{{ ikey }}" href="{{ url_for('group_page', group_name=group) }}">
+      <span class="tile-free" aria-hidden="true">ฟรี</span>
       <span class="tile-icon img" aria-hidden="true">{{ brand.group_img_html(group, 'gimg', 72)|safe }}</span>
       <span class="tile-label">{{ short.get(group, group) }}</span>
       <span class="tile-meta">{{ services|length }} บริการ</span>

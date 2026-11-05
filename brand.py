@@ -9,7 +9,7 @@ TEAL_SOFT = "#E6F6F2"
 
 SITE_DESC = (
     "ครูดี (krudee.cc) บริการทำแผนการจัดการเรียนรู้ แผนการสอน สื่อการสอน "
-    "ใบงาน ข้อสอบพร้อมเฉลย ว.PA SAR วิจัยในชั้นเรียน และแปลง PDF เป็น Word ภาษาไทย สำหรับครู"
+    "ใบงาน ข้อสอบพร้อมเฉลย ว.PA SAR วิจัยในชั้นเรียน และแปลง PDF เป็น Word ภาษาไทย สำหรับครู — ทดลองใช้ฟรี"
 )
 
 # Inline SVG icons (24x24 viewBox) for groups — simple line style
@@ -94,5 +94,5 @@ def page_meta(title=None, description=None, path="/", og_type="website"):
         "og_type": og_type,
         "site_name": SITE_NAME,
         "site_url": SITE_URL,
-        "og_image": SITE_URL + "/static/og-image.png",
+        "og_image": SITE_URL + "/static/og-image.png?v=2",
     }

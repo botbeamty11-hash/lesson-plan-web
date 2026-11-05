@@ -294,3 +294,18 @@ dl.meta dt{color:var(--mut)}dl.meta dd{margin:0}
 
 .nav-tabs a .tab-ic.tab-img{display:grid;place-items:center;width:28px;height:28px}
 .nav-tabs a .tab-ic.tab-img img{width:28px;height:28px;display:block;object-fit:contain}
+
+/* —— Free trial promo —— */
+.home-top{position:relative}
+.free-pill{display:inline-flex;align-items:center;gap:8px;margin:0 0 12px;padding:7px 16px 7px 12px;
+  background:linear-gradient(135deg,#F2B61F 0%,#F59E0B 100%);color:#5B3A00;font-weight:800;font-size:.92rem;
+  border-radius:999px;box-shadow:0 4px 14px rgba(242,182,31,.35);letter-spacing:.01em}
+.free-pill-dot{width:8px;height:8px;border-radius:50%;background:#fff;box-shadow:0 0 0 3px rgba(255,255,255,.35)}
+.tile{position:relative;overflow:hidden}
+.tile-free{position:absolute;top:10px;right:-22px;width:88px;text-align:center;
+  background:linear-gradient(135deg,#F2B61F,#F97316);color:#5B3A00;font-weight:800;font-size:.68rem;
+  padding:3px 0;transform:rotate(35deg);box-shadow:0 2px 6px rgba(0,0,0,.12);letter-spacing:.04em;pointer-events:none;z-index:2}
+@media(max-width:640px){
+  .tile-free{top:8px;right:-26px;width:80px;font-size:.62rem;padding:2px 0}
+  .free-pill{font-size:.88rem;padding:6px 14px 6px 10px}
+}
