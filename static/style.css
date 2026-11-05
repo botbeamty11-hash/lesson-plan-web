@@ -197,3 +197,8 @@ dl.meta dt{color:var(--mut)}dl.meta dd{margin:0}
   .hero-cta .btn{width:100%}
 }
 @media(max-width:480px){.slip-grid{grid-template-columns:1fr 1fr;gap:8px}.slip-big{height:200px}.slip-actions{flex-direction:column}}
+
+/* legal pages */
+.legal-card h2{margin-top:22px;font-size:1.1rem}
+.legal-card p{line-height:1.7;margin:0 0 12px;color:var(--text,#0f172a)}
+.legal-card a{color:var(--brand,#2563eb)}

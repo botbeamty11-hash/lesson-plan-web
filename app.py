@@ -813,6 +813,28 @@ def points_topup_submit():
     return redirect(url_for("pay_page", job_id=job["id"]))
 
 
+
+# ---------------- legal / public policy pages ----------------
+@app.get("/privacy")
+def privacy():
+    meta = brand.page_meta(
+        title="นโยบายความเป็นส่วนตัว",
+        description="นโยบายความเป็นส่วนตัวของครูดี (krudee.cc): ข้อมูล Google ที่เก็บ การใช้ไฟล์ และการขอลบข้อมูล",
+        path="/privacy",
+    )
+    return render_template("privacy.html", meta=meta)
+
+
+@app.get("/terms")
+def terms():
+    meta = brand.page_meta(
+        title="ข้อกำหนดการใช้บริการ",
+        description="ข้อกำหนดการใช้บริการครูดี (krudee.cc) สำหรับการสั่งงานและใช้งานเว็บไซต์",
+        path="/terms",
+    )
+    return render_template("terms.html", meta=meta)
+
+
 # ---------------- SEO ----------------
 @app.get("/robots.txt")
 def robots_txt():
@@ -836,6 +858,8 @@ def sitemap_xml():
     urls.append("/services")
     urls.append("/plan")
     urls.append("/track")
+    urls.append("/privacy")
+    urls.append("/terms")
     for group, _svcs in catalog.services_by_group(include_disabled=False, home=True):
         urls.append(f"/group/{group}")
     for s in catalog.all_services(include_disabled=False):
