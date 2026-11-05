@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}ติดตามงาน{% endblock %}
+{% block content %}
+<div class="card">
+  <h1>ติดตามงาน</h1>
+  <p class="sub">กรอกรหัสงานที่ได้รับหลังส่งคำสั่ง (เช่น <span class="mono">A1B2C3D4</span>)</p>
+  <form method="get" action="/track" class="track-form">
+    <label for="id">รหัสงาน</label>
+    <input type="text" id="id" name="id" placeholder="รหัสงาน" autocomplete="off" required
+           pattern="[A-Za-z0-9\-]+" style="text-transform:uppercase">
+    <div class="actions"><button class="btn big" type="submit">🔍 ดูสถานะ</button></div>
+  </form>
+</div>
+{% endblock %}

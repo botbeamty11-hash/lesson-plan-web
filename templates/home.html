@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}หน้าแรก — บริการครู{% endblock %}
+{% block content %}
+<div class="card home-hero">
+  <h1>เลือกบริการที่ต้องการ</h1>
+  <p class="sub">กดกลุ่มด้านล่างเพื่อดูบริการในกลุ่มนั้น — ส่งงานง่าย ๆ ไม่กี่ขั้นตอน</p>
+</div>
+<div class="group-grid">
+{% for group, services in groups %}
+  <a class="group-card" href="{{ url_for('group_page', group_name=group) }}">
+    <div class="gc-icon">{{ group_icons.get(group, '📦') }}</div>
+    <div class="gc-body">
+      <h2>{{ group }}</h2>
+      <p>{{ services|length }} บริการ</p>
+    </div>
+  </a>
+{% else %}
+  <div class="card"><p class="hint">ยังไม่มีบริการที่เปิดใช้งาน</p></div>
+{% endfor %}
+</div>
+<p class="hint center-hint"><a href="{{ url_for('track_lookup') }}">มีรหัสงานแล้ว? ติดตามสถานะที่นี่</a></p>
+{% endblock %}

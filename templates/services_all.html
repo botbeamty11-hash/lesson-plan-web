@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}บริการทั้งหมด{% endblock %}
+{% block content %}
+<div class="card">
+  <h1>บริการทั้งหมด</h1>
+  <p class="sub">เลือกกลุ่ม หรือเลื่อนดูรายการด้านล่าง</p>
+</div>
+{% for group, services in groups %}
+<div class="card">
+  <h2><span class="gc-icon inline">{{ group_icons.get(group, '📦') }}</span> {{ group }}</h2>
+  <ul class="svc-list">
+  {% for s in services %}
+    <li>
+      <a href="{% if s.special_form %}{{ url_for('plan_form') }}{% else %}{{ url_for('service_form', service_id=s.id) }}{% endif %}">
+        <span class="svc-ico">{{ s.icon or '📄' }}</span>
+        <span class="svc-text">
+          <b>{{ s.name }}</b>
+          <span class="svc-desc">{{ s.description }}</span>
+        </span>
+        <span class="svc-go">›</span>
+      </a>
+    </li>
+  {% endfor %}
+  </ul>
+</div>
+{% else %}
+<div class="card"><p class="hint">ยังไม่มีบริการ</p></div>
+{% endfor %}
+{% endblock %}

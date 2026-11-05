@@ -29,6 +29,11 @@ DEFAULT_PROMPTPAY_ID = ""
 PAYMENT_STATUSES = ("awaiting_payment", "payment_review", "payment_rejected")
 CLAIMABLE_STATUSES = ("queued",)
 SLIP_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".pdf"}
+RESULT_EXTS = {".docx", ".pdf", ".pptx", ".xlsx", ".png", ".jpg", ".jpeg", ".zip", ".txt"}
+RESULT_KIND_BY_EXT = {
+    ".docx": "docx", ".pdf": "pdf", ".pptx": "pptx", ".xlsx": "xlsx",
+    ".png": "png", ".jpg": "jpg", ".jpeg": "jpg", ".zip": "zip", ".txt": "txt",
+}
 
 os.makedirs(JOBS_DIR, exist_ok=True)
 os.makedirs(TEMPLATE_DIR, exist_ok=True)
@@ -188,20 +193,51 @@ def qr_image_path_for_display(amount=None):
 
 
 def amount_due_for(job, settings=None):
-    """10 บาท × number of plans the teacher chose (effective_plan_count)."""
+    """Compute amount due. Lesson plans use price_per_plan × plans (+ addons).
+    Other services use catalog price × qty (+ optional breakdown already on job)."""
     settings = settings or load_settings()
-    n = plan_count_of(job)
-    price = float(settings.get("price_per_plan") or DEFAULT_PRICE_PER_PLAN)
-    return round(price * n, 2), n, price
+    # Prefer already-computed payment / breakdown
+    if job.get("payment") and job["payment"].get("amount_due") is not None and job.get("_amount_locked"):
+        pay = job["payment"]
+        return float(pay["amount_due"]), int(pay.get("plan_count_billed") or pay.get("qty") or 1), float(pay.get("price_per_plan") or pay.get("unit_price") or 0)
+
+    sid = job.get("service_id") or "lesson_plan"
+    if sid == "lesson_plan":
+        n = plan_count_of(job)
+        price = float(settings.get("price_per_plan") or DEFAULT_PRICE_PER_PLAN)
+        amount = round(price * n, 2)
+        for ad in job.get("addons") or []:
+            try:
+                amount = round(amount + float(ad.get("price") or 0), 2)
+            except (TypeError, ValueError):
+                pass
+        return amount, n, price
+
+    # Generic service: use catalog
+    try:
+        import catalog
+        svc = catalog.get_service(sid) or {}
+        amount, qty, price, _ = catalog.compute_amount(svc, job.get("inputs") or {}, job.get("addons"))
+        return amount, qty, price
+    except Exception:
+        n = 1
+        price = float(settings.get("price_per_plan") or DEFAULT_PRICE_PER_PLAN)
+        return round(price * n, 2), n, price
 
 
 def _init_payment(job, settings=None):
     settings = settings or load_settings()
     amount, n, price = amount_due_for(job, settings)
+    breakdown = job.get("price_breakdown")
     job["payment"] = {
         "amount_due": amount,
-        "plan_count_billed": n,
-        "price_per_plan": price,
+        "plan_count_billed": n,  # qty billed (plans or other units)
+        "qty": n,
+        "price_per_plan": price,  # legacy name = unit price
+        "unit_price": price,
+        "service_id": job.get("service_id") or "lesson_plan",
+        "service_name": job.get("service_name") or "แผนการจัดการเรียนรู้",
+        "breakdown": breakdown,
         "payee_name": settings.get("payee_name") or DEFAULT_PAYEE_NAME,
         "promptpay_id": settings.get("promptpay_id") or settings.get("qr_decoded_id") or "",
         "requested_at": now_iso(),
@@ -345,6 +381,8 @@ def approve_payment(job_id, *, slip_ref=None, amount=None, transfer_time=None,
         j["status"] = "queued"
         j["queued_at"] = now_iso()
         save(j)
+        # Auto services fulfil immediately after payment (outside this lock via flag)
+        j["_run_auto"] = (j.get("fulfil") == "auto")
         return j
 
 
@@ -452,10 +490,142 @@ def eta_factor(job):
     return 1.0
 
 
-def create_job(uploads, fields, note, plan_counter=None, instructions=None, options=None):
+
+def create_service_job(service, inputs, uploads, *, file_count=1):
+    """Create a job for a catalog service (not lesson_plan special form).
+    uploads: {field_id: (filename, save_fn)} or {field_id: [(filename, save_fn), ...]} for multi.
+    inputs: dict of text/number/select values (no files).
+    """
+    import catalog
+    job_id = new_job_id()
+    d = job_dir(job_id)
+    os.makedirs(d)
+    files = {
+        "source": None, "source_original_name": None,
+        "template": None, "template_original_name": None,
+        "template_is_default": False,
+        "result_docx": None, "result_pdf": None, "slip": None,
+        "uploads": [],
+    }
+    # Persist uploads
+    for field_id, val in (uploads or {}).items():
+        items = val if isinstance(val, list) else [val]
+        for idx, item in enumerate(items):
+            if not item:
+                continue
+            fname, save_fn = item
+            ext = os.path.splitext(fname)[1].lower()
+            if len(items) > 1:
+                stored = f"{field_id}_{idx}{ext}"
+            else:
+                stored = f"{field_id}{ext}"
+            save_fn(os.path.join(d, stored))
+            files["uploads"].append({
+                "field": field_id, "stored": stored,
+                "original_name": fname, "index": idx,
+            })
+            # Convenience mirrors for first source/template
+            if field_id in ("source", "template") and not files.get(field_id):
+                files[field_id] = stored
+                files[field_id + "_original_name"] = fname
+            elif field_id not in ("source", "template") and not files.get("source"):
+                # first non-template file also exposed as source for workers
+                files["source"] = stored
+                files["source_original_name"] = fname
+
+    inputs = dict(inputs or {})
+    inputs["_file_count"] = int(file_count or 1)
+    amount, qty, price, breakdown = catalog.compute_amount(service, inputs)
+    collect = bool(service.get("collect_payment"))
+
+    job = {
+        "id": job_id,
+        "service_id": service["id"],
+        "service_name": service["name"],
+        "fulfil": service.get("fulfil") or "worker",
+        "collect_payment": collect,
+        "status": "queued" if not collect else "awaiting_payment",
+        "created_at": now_iso(),
+        "started_at": None,
+        "finished_at": None,
+        "queued_at": now_iso() if not collect else None,
+        "fields": {},  # lesson-plan compatibility
+        "inputs": inputs,
+        "note": inputs.get("instructions") or "",
+        "instructions": inputs.get("instructions") or "",
+        "options": [],
+        "addons": [],
+        "from_scratch": not bool(files.get("source") or files.get("uploads")),
+        "files": files,
+        "results": [],
+        "plan_count": 1,
+        "plan_numbers": [],
+        "plan_mode": "all",
+        "plan_selected": None,
+        "effective_plan_count": 1,
+        "price_breakdown": breakdown,
+        "error": None,
+        "payment": None,
+    }
+    if collect:
+        _init_payment(job)
+        job["payment"]["plan_count_billed"] = qty
+        job["payment"]["qty"] = qty
+        job["payment"]["unit_price"] = price
+        job["payment"]["price_per_plan"] = price
+    else:
+        # Keep amount as catalog data for later; do not start PromptPay flow
+        job["catalog_amount"] = amount
+        job["catalog_qty"] = qty
+        job["catalog_unit_price"] = price
+    with lock():
+        save(job)
+    return job
+
+
+def try_auto_fulfil(job_id):
+    """If job is auto-fulfil and queued, run immediately and mark done. Returns job."""
+    j = load(job_id)
+    if not j:
+        raise KeyError(job_id)
+    if j.get("fulfil") != "auto":
+        return j
+    if j["status"] not in ("queued", "processing"):
+        return j
+    # mark processing
+    with lock():
+        j = load(job_id)
+        if j["status"] == "queued":
+            j["status"] = "processing"
+            j["started_at"] = now_iso()
+            save(j)
+    try:
+        import autofulfil
+        results = autofulfil.run_auto(j, job_dir(job_id))
+        extras = []
+        for stored, kind in results:
+            extras.append((os.path.join(job_dir(job_id), stored), stored, kind, stored))
+        # complete without requiring docx — pass via extra_files only
+        # Avoid double-copy: files already in place; register via a no-op copy path
+        with lock():
+            j = load(job_id)
+            for stored, kind in results:
+                _register_result(j, stored, kind, stored)
+            j["status"] = "done"
+            j["started_at"] = j["started_at"] or j["created_at"]
+            j["finished_at"] = now_iso()
+            j["error"] = None
+            save(j)
+            return j
+    except Exception as e:
+        return fail(job_id, f"ทำอัตโนมัติไม่สำเร็จ: {e}")
+
+
+def create_job(uploads, fields, note, plan_counter=None, instructions=None, options=None, addons=None):
     """uploads: {"template": (filename, save_fn), "source": (filename, save_fn)}.
     save_fn(dest_path) writes the uploaded file. If no template upload is given,
-    the admin default template (data/template/main.docx) is copied as a fallback."""
+    the admin default template (data/template/main.docx) is copied as a fallback.
+    addons: optional list of {id,name,price,unit} upsells (slides/worksheet/test)."""
     job_id = new_job_id()
     d = job_dir(job_id)
     os.makedirs(d)
@@ -475,18 +645,43 @@ def create_job(uploads, fields, note, plan_counter=None, instructions=None, opti
         files["template"] = "template.docx"
         files["template_original_name"] = "main.docx (ค่าเริ่มต้นของระบบ)"
         files["template_is_default"] = True
+    # Resolve addon definitions from catalog (price snapshot at order time)
+    addon_list = []
+    if addons:
+        try:
+            import catalog
+            svc = catalog.get_service("lesson_plan") or {}
+            allowed = {a["id"]: a for a in (svc.get("addons") or [])}
+            for a in addons:
+                aid = a if isinstance(a, str) else (a.get("id") if isinstance(a, dict) else None)
+                if aid and aid in allowed:
+                    src = allowed[aid]
+                    addon_list.append({
+                        "id": src["id"], "name": src["name"],
+                        "price": float(src["price"]), "unit": src.get("unit") or "per_set",
+                    })
+        except Exception:
+            pass
+
     job = {
         "id": job_id,
+        "service_id": "lesson_plan",
+        "service_name": "แผนการจัดการเรียนรู้",
+        "fulfil": "worker",
+        "collect_payment": True,
         "status": "queued",
         "created_at": now_iso(),
         "started_at": None,
         "finished_at": None,
         "fields": fields,
+        "inputs": dict(fields or {}),
         "note": note,               # legacy name, same text as instructions
         "instructions": instructions if instructions is not None else note,
         "options": list(options or []),
+        "addons": addon_list,
         "from_scratch": not files["source"],
         "files": files,
+        "results": [],              # [{name, kind, original_name}]
         "plan_count": 1,          # plans detected in the source file
         "plan_numbers": [],       # detected plan numbers
         "plan_mode": "all",       # 'all' | 'one'
@@ -502,6 +697,18 @@ def create_job(uploads, fields, note, plan_counter=None, instructions=None, opti
             job["plan_count"], job["plan_numbers"] = 1, []
     job["effective_plan_count"] = job["plan_count"]
     job["payment"] = None
+    try:
+        import catalog
+        svc = catalog.get_service("lesson_plan") or {"id": "lesson_plan", "name": "แผนการจัดการเรียนรู้", "unit": "per_plan", "price": DEFAULT_PRICE_PER_PLAN}
+        # price comes from settings for lesson_plan
+        s = load_settings()
+        svc = dict(svc)
+        svc["price"] = float(s.get("price_per_plan") or DEFAULT_PRICE_PER_PLAN)
+        amount, qty, price, breakdown = catalog.compute_amount(
+            svc, {"effective_plan_count": job["effective_plan_count"]}, job["addons"])
+        job["price_breakdown"] = breakdown
+    except Exception:
+        job["price_breakdown"] = None
     if job["plan_count"] > 1:
         job["status"] = "awaiting_choice"  # submitter must choose one plan vs all before paying
     else:
@@ -526,6 +733,17 @@ def set_plan_choice(job_id, mode, selected=None):
         else:
             j["plan_mode"], j["plan_selected"] = "all", None
             j["effective_plan_count"] = max(1, int(j.get("plan_count") or 1))
+        try:
+            import catalog
+            svc = catalog.get_service("lesson_plan") or {"id": "lesson_plan", "name": "แผนการจัดการเรียนรู้", "unit": "per_plan", "price": DEFAULT_PRICE_PER_PLAN}
+            svc = dict(svc)
+            s = load_settings()
+            svc["price"] = float(s.get("price_per_plan") or DEFAULT_PRICE_PER_PLAN)
+            _, _, _, breakdown = catalog.compute_amount(
+                svc, {"effective_plan_count": j["effective_plan_count"]}, j.get("addons"))
+            j["price_breakdown"] = breakdown
+        except Exception:
+            pass
         _init_payment(j)
         j["status"] = "awaiting_payment"
         save(j)
@@ -537,19 +755,38 @@ def with_paths(job):
     j = dict(job)
     j["paths"] = {k: (os.path.join(d, v) if v else None)
                   for k, v in job["files"].items()
-                  if k in ("source", "template", "result_docx", "result_pdf", "slip")}
+                  if k in ("source", "template", "result_docx", "result_pdf", "slip")
+                  or (isinstance(k, str) and k.startswith("result_"))}
     j["paths"]["job_dir"] = d
+    # multi uploads
+    uploads = []
+    for u in (job.get("files") or {}).get("uploads") or []:
+        uploads.append({**u, "path": os.path.join(d, u["stored"])})
+    j["paths"]["uploads"] = uploads
+    results = []
+    for r in job.get("results") or []:
+        results.append({**r, "path": os.path.join(d, r["name"])})
+    j["paths"]["results"] = results
+    j["service_id"] = job.get("service_id") or "lesson_plan"
+    j["service_name"] = job.get("service_name") or "แผนการจัดการเรียนรู้"
     return j
 
 
-def claim_next():
+def claim_next(service_id=None):
+    """Claim oldest queued worker job. Skips auto-fulfil jobs (they self-complete).
+    Optional service_id filter."""
     with lock():
         for j in all_jobs():
-            if j["status"] == "queued":
-                j["status"] = "processing"
-                j["started_at"] = now_iso()
-                save(j)
-                return j
+            if j["status"] != "queued":
+                continue
+            if j.get("fulfil") == "auto":
+                continue
+            if service_id and (j.get("service_id") or "lesson_plan") != service_id:
+                continue
+            j["status"] = "processing"
+            j["started_at"] = now_iso()
+            save(j)
+            return j
     return None
 
 
@@ -566,7 +803,28 @@ def claim(job_id):
         return j
 
 
-def complete(job_id, docx_src=None, pdf_src=None, docx_writer=None, pdf_writer=None):
+def _register_result(j, stored_name, kind=None, original_name=None):
+    """Append/update a result file entry on the job."""
+    ext = os.path.splitext(stored_name)[1].lower()
+    kind = kind or RESULT_KIND_BY_EXT.get(ext) or ext.lstrip(".")
+    results = list(j.get("results") or [])
+    results = [r for r in results if r.get("name") != stored_name]
+    results.append({"name": stored_name, "kind": kind, "original_name": original_name or stored_name})
+    j["results"] = results
+    # legacy mirrors
+    if kind == "docx":
+        j["files"]["result_docx"] = stored_name
+    elif kind == "pdf":
+        j["files"]["result_pdf"] = stored_name
+    else:
+        j["files"][f"result_{kind}"] = stored_name
+    return j
+
+
+def complete(job_id, docx_src=None, pdf_src=None, docx_writer=None, pdf_writer=None,
+             extra_files=None):
+    """Mark job done. Lesson-plan jobs still require a .docx; other services accept any result.
+    extra_files: list of (src_path | writer_fn, stored_name, kind?, original_name?)."""
     with lock():
         j = load(job_id)
         if not j:
@@ -575,13 +833,32 @@ def complete(job_id, docx_src=None, pdf_src=None, docx_writer=None, pdf_writer=N
         if docx_src or docx_writer:
             dest = os.path.join(d, "result.docx")
             docx_writer(dest) if docx_writer else shutil.copy2(docx_src, dest)
-            j["files"]["result_docx"] = "result.docx"
+            _register_result(j, "result.docx", "docx")
         if pdf_src or pdf_writer:
             dest = os.path.join(d, "result.pdf")
             pdf_writer(dest) if pdf_writer else shutil.copy2(pdf_src, dest)
-            j["files"]["result_pdf"] = "result.pdf"
-        if not j["files"]["result_docx"]:
+            _register_result(j, "result.pdf", "pdf")
+        for item in extra_files or []:
+            if len(item) == 2:
+                src, stored = item
+                kind = original = None
+            elif len(item) == 3:
+                src, stored, kind = item
+                original = None
+            else:
+                src, stored, kind, original = item[:4]
+            dest = os.path.join(d, stored)
+            if callable(src):
+                src(dest)
+            else:
+                shutil.copy2(src, dest)
+            _register_result(j, stored, kind, original)
+        sid = j.get("service_id") or "lesson_plan"
+        has_any = bool(j.get("results")) or bool(j["files"].get("result_docx")) or bool(j["files"].get("result_pdf"))
+        if sid == "lesson_plan" and not j["files"].get("result_docx"):
             raise ValueError("result docx required")
+        if not has_any:
+            raise ValueError("at least one result file required")
         j["status"] = "done"
         j["started_at"] = j["started_at"] or j["created_at"]
         j["finished_at"] = now_iso()
@@ -647,7 +924,15 @@ def status_info(job_id):
     now = datetime.now(TZ)
     pc = plan_count_of(j)
     pay = j.get("payment") or {}
-    info = {"id": j["id"], "status": j["status"], "created_at": j["created_at"],
+    results = j.get("results") or []
+    info = {"id": j["id"],
+            "service_id": j.get("service_id") or "lesson_plan",
+            "service_name": j.get("service_name") or "แผนการจัดการเรียนรู้",
+            "fulfil": j.get("fulfil") or "worker",
+            "inputs": j.get("inputs") or {},
+            "addons": j.get("addons") or [],
+            "results": results,
+            "status": j["status"], "created_at": j["created_at"],
             "started_at": j["started_at"], "finished_at": j["finished_at"],
             "error": j["error"], "avg_minutes_per_plan": round(avg, 1),
             "avg_minutes": round(avg, 1),  # kept for older clients (now per plan)
@@ -658,8 +943,12 @@ def status_info(job_id):
             "eta_factor": eta_factor(j), "from_scratch": bool(j.get("from_scratch")),
             "instructions": instructions_of(j), "options": j.get("options") or [],
             "job_minutes": round(pc * avg * eta_factor(j), 1),
-            "has_docx": bool(j["files"]["result_docx"]),
-            "has_pdf": bool(j["files"]["result_pdf"]),
+            "has_docx": bool(j["files"].get("result_docx")),
+            "has_pdf": bool(j["files"].get("result_pdf")),
+            "has_results": bool(results) or bool(j["files"].get("result_docx")) or bool(j["files"].get("result_pdf")),
+            "result_kinds": sorted({r.get("kind") for r in results if r.get("kind")}
+                                   | ({"docx"} if j["files"].get("result_docx") else set())
+                                   | ({"pdf"} if j["files"].get("result_pdf") else set())),
             "has_slip": bool((j.get("files") or {}).get("slip") or pay.get("slip_file")),
             "payment": {
                 "amount_due": pay.get("amount_due"),
@@ -752,7 +1041,9 @@ def topup_board(filt="all", page=1, per_page=24):
                 up_disp = up[:16].replace("T", " ")
             slips.append({"job": j, "pay": pay, "state": state,
                           "uploaded_at": up, "uploaded_disp": up_disp,
-                          "is_pdf": slip.lower().endswith(".pdf")})
+                          "is_pdf": slip.lower().endswith(".pdf"),
+                          "service_id": j.get("service_id") or "lesson_plan",
+                          "service_name": j.get("service_name") or "แผนการจัดการเรียนรู้"})
     for v in stats.values():
         v["amount"] = round(v["amount"], 2)
     slips.sort(key=lambda s: s["uploaded_at"], reverse=True)

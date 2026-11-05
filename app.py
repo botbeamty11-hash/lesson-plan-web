@@ -11,9 +11,12 @@ from flask import (Flask, abort, jsonify, redirect, render_template, request,
                    send_file, session, url_for, flash)
 from werkzeug.middleware.proxy_fix import ProxyFix
 import store
+import catalog
 from plancount import detect_plans
 
 ALLOWED = {".doc", ".docx", ".pdf"}
+ALLOWED_SERVICE = {".doc", ".docx", ".pdf", ".pptx", ".xlsx", ".xls", ".csv",
+                   ".png", ".jpg", ".jpeg", ".webp", ".gif", ".tif", ".tiff", ".txt", ".zip"}
 MAX_MB = 20
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
 WORKER_TOKEN = os.environ.get("WORKER_TOKEN", "")
@@ -29,7 +32,7 @@ if len(_secret) < 16:
     log.warning("SECRET_KEY missing/short: using a random key (admin sessions reset on restart)")
     _secret = os.urandom(32)
 app.secret_key = _secret
-app.config["MAX_CONTENT_LENGTH"] = (2 * MAX_MB + 2) * 1024 * 1024  # two files per submission
+app.config["MAX_CONTENT_LENGTH"] = (10 * MAX_MB + 2) * 1024 * 1024  # multi-file service uploads
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 if len(ADMIN_PASSWORD) < 8:
@@ -86,17 +89,30 @@ def fire_webhook(job_id):
 
 @app.errorhandler(413)
 def too_large(e):
-    flash(f"ไฟล์ใหญ่เกินไป (สูงสุด {MAX_MB} MB)")
-    return redirect(url_for("index"))
+    flash(f"ไฟล์ใหญ่เกินไป (สูงสุด {MAX_MB} MB ต่อไฟล์)")
+    ref = (request.referrer or "")
+    if "/plan" in ref or "/submit" in (request.path or ""):
+        return redirect(url_for("plan_form"))
+    return redirect(request.referrer or url_for("index"))
 
 
 @app.get("/")
 def index():
+    groups = catalog.services_by_group(include_disabled=False, home=True)
+    return render_template("home.html", groups=groups, group_icons=catalog.GROUP_ICONS,
+                           unit_label=catalog.unit_label)
+
+
+@app.get("/plan")
+def plan_form():
+    """Legacy lesson-plan order form (unchanged flow)."""
     from datetime import datetime
     be = datetime.now(store.TZ).year + 543
+    svc = catalog.get_service("lesson_plan") or {}
     return render_template("index.html", fields=FIELDS, max_mb=MAX_MB, uploads=UPLOADS,
                            required_uploads=REQUIRED_UPLOADS, options=OPTIONS, min_instr=MIN_INSTRUCTIONS,
-                           months=THAI_MONTHS, years=list(range(be - 1, be + 3)), this_year=be)
+                           months=THAI_MONTHS, years=list(range(be - 1, be + 3)), this_year=be,
+                           addons=svc.get("addons") or [], service=svc)
 
 
 @app.post("/submit")
@@ -104,16 +120,17 @@ def submit():
     ups = {}
     instructions = (request.form.get("instructions") or request.form.get("note") or "").strip()
     options = [o for o in OPTIONS if o in request.form.getlist("options")]
+    addon_ids = request.form.getlist("addons")
     for kind, label in UPLOADS:
         f = request.files.get(kind)
         if not f or not f.filename:
             if kind not in REQUIRED_UPLOADS:
                 continue
             flash(f"กรุณาเลือก{label.split(':')[0]} ({label.split(': ', 1)[1]})")
-            return redirect(url_for("index"))
+            return redirect(url_for("plan_form"))
         if os.path.splitext(f.filename)[1].lower() not in ALLOWED:
             flash(f"{label.split(':')[0]}: รองรับเฉพาะไฟล์ .doc, .docx และ .pdf เท่านั้น")
-            return redirect(url_for("index"))
+            return redirect(url_for("plan_form"))
         ups[kind] = (os.path.basename(f.filename), f.save)
     fields = {k: (request.form.get(k) or "").strip() for k in FIELD_KEYS}
     if fields["teach_month"] and fields["teach_month"] not in THAI_MONTHS:
@@ -121,15 +138,15 @@ def submit():
     if "source" not in ups and len(instructions) < MIN_INSTRUCTIONS:
         flash("ไม่ได้แนบไฟล์ที่ 2 (ไฟล์ข้อมูล): กรุณาพิมพ์คำสั่งเพิ่มเติมถึงผู้จัดทำ "
               "โดยระบุอย่างน้อย วิชา / ชั้น / เรื่อง ที่ต้องการ (เช่น \"ทำแผนที่ 1 เรื่อง เศษส่วน ป.4\")")
-        return redirect(url_for("index"))
+        return redirect(url_for("plan_form"))
     job = store.create_job(ups, fields, instructions, plan_counter=detect_plans,
-                           instructions=instructions, options=options)
+                           instructions=instructions, options=options, addons=addon_ids)
     d = store.job_dir(job["id"])
     for kind in ("template", "source"):
         if job["files"].get(kind) and os.path.getsize(os.path.join(d, job["files"][kind])) > MAX_MB * 1024 * 1024:
             shutil.rmtree(d)
             flash(f"ไฟล์ใหญ่เกินไป (สูงสุด {MAX_MB} MB ต่อไฟล์)")
-            return redirect(url_for("index"))
+            return redirect(url_for("plan_form"))
     if job["status"] == "awaiting_choice":
         return redirect(url_for("choose_plan", job_id=job["id"]))
     if job["status"] == "awaiting_payment":
@@ -138,6 +155,159 @@ def submit():
     if job["status"] == "queued":
         fire_webhook(job["id"])
     return redirect(url_for("job_page", job_id=job["id"]))
+
+
+
+def _save_upload_factory(file_storage):
+    """Return (basename, save_fn) for store helpers."""
+    return (os.path.basename(file_storage.filename), file_storage.save)
+
+
+def _parse_service_form(service):
+    """Validate catalog form; return (inputs, uploads, error_message)."""
+    inputs = {}
+    uploads = {}
+    for field in service.get("inputs") or []:
+        fid = field["id"]
+        ftype = field.get("type")
+        required = bool(field.get("required"))
+        if ftype in ("file", "files"):
+            if ftype == "files":
+                flist = request.files.getlist(fid)
+            else:
+                one = request.files.get(fid)
+                flist = [one] if one and one.filename else []
+            flist = [f for f in flist if f and f.filename]
+            if required and not flist:
+                return None, None, f"กรุณาอัปโหลด{field.get('label') or fid}"
+            accept = {a.lower() for a in (field.get("accept") or [])}
+            saved = []
+            for f in flist:
+                ext = os.path.splitext(f.filename)[1].lower()
+                if accept and ext not in accept:
+                    return None, None, f"{field.get('label')}: รองรับเฉพาะ {' '.join(sorted(accept))}"
+                if ext not in ALLOWED_SERVICE:
+                    return None, None, f"ชนิดไฟล์ไม่รองรับ: {ext}"
+                saved.append(_save_upload_factory(f))
+            if saved:
+                uploads[fid] = saved if ftype == "files" else saved[0]
+            continue
+        raw = (request.form.get(fid) or "").strip()
+        if ftype == "number":
+            if raw == "":
+                if required:
+                    return None, None, f"กรุณากรอก{field.get('label') or fid}"
+                if field.get("default") is not None:
+                    inputs[fid] = field["default"]
+                continue
+            try:
+                num = int(raw)
+            except ValueError:
+                try:
+                    num = float(raw)
+                except ValueError:
+                    return None, None, f"{field.get('label')}: ต้องเป็นตัวเลข"
+            if field.get("min") is not None and num < field["min"]:
+                return None, None, f"{field.get('label')}: อย่างน้อย {field['min']}"
+            if field.get("max") is not None and num > field["max"]:
+                return None, None, f"{field.get('label')}: ไม่เกิน {field['max']}"
+            inputs[fid] = num
+        else:
+            if required and not raw:
+                return None, None, f"กรุณากรอก{field.get('label') or fid}"
+            if raw:
+                if ftype == "select" and field.get("choices") and raw not in field["choices"]:
+                    return None, None, f"ค่าที่เลือกไม่ถูกต้อง: {field.get('label')}"
+                inputs[fid] = raw
+            elif field.get("default") is not None:
+                inputs[fid] = field["default"]
+    return inputs, uploads, None
+
+
+@app.get("/services")
+def services_all():
+    groups = catalog.services_by_group(include_disabled=False, home=True)
+    return render_template("services_all.html", groups=groups, group_icons=catalog.GROUP_ICONS)
+
+
+@app.get("/group/<path:group_name>")
+def group_page(group_name):
+    groups = dict(catalog.services_by_group(include_disabled=False, home=True))
+    if group_name not in groups:
+        abort(404)
+    return render_template("group.html", group=group_name, services=groups[group_name],
+                           icon=catalog.GROUP_ICONS.get(group_name, "📦"),
+                           unit_label=catalog.unit_label)
+
+
+@app.get("/services/<service_id>")
+def service_form(service_id):
+    if service_id == "lesson_plan":
+        return redirect(url_for("plan_form"))
+    svc = catalog.get_service(service_id, include_disabled=False)
+    if not svc or svc.get("special_form"):
+        abort(404)
+    # Split essential (required) vs optional fields for collapsible UI
+    required, optional = [], []
+    for f in svc.get("inputs") or []:
+        (required if f.get("required") else optional).append(f)
+    return render_template("service_form.html", service=svc, required_fields=required,
+                           optional_fields=optional, max_mb=MAX_MB,
+                           unit_label=catalog.unit_label,
+                           show_price=bool(svc.get("collect_payment")))
+
+
+@app.post("/services/<service_id>/submit")
+def service_submit(service_id):
+    if service_id == "lesson_plan":
+        return redirect(url_for("plan_form"))
+    svc = catalog.get_service(service_id, include_disabled=False)
+    if not svc or svc.get("special_form"):
+        abort(404)
+    inputs, uploads, err = _parse_service_form(svc)
+    if err:
+        flash(err)
+        return redirect(url_for("service_form", service_id=service_id))
+    # size check helper after create
+    file_count = 0
+    for v in (uploads or {}).values():
+        file_count += len(v) if isinstance(v, list) else 1
+    job = store.create_service_job(svc, inputs, uploads, file_count=max(1, file_count))
+    d = store.job_dir(job["id"])
+    # enforce per-file size
+    for name in os.listdir(d):
+        if name == "job.json":
+            continue
+        p = os.path.join(d, name)
+        if os.path.isfile(p) and os.path.getsize(p) > MAX_MB * 1024 * 1024:
+            import shutil as _sh
+            _sh.rmtree(d)
+            flash(f"ไฟล์ใหญ่เกินไป (สูงสุด {MAX_MB} MB ต่อไฟล์)")
+            return redirect(url_for("service_form", service_id=service_id))
+    # Free auto services: fulfil immediately
+    if job["status"] == "queued" and job.get("fulfil") == "auto":
+        job = store.try_auto_fulfil(job["id"])
+        return redirect(url_for("job_page", job_id=job["id"]))
+    if job["status"] == "awaiting_payment":
+        return redirect(url_for("pay_page", job_id=job["id"]))
+    if job["status"] == "queued":
+        fire_webhook(job["id"])
+    return redirect(url_for("job_page", job_id=job["id"]))
+
+
+@app.get("/track")
+def track_lookup():
+    """Simple job-id lookup for teachers."""
+    q = (request.args.get("id") or "").strip()
+    if q:
+        try:
+            j = store.load(q)
+        except ValueError:
+            j = None
+        if j:
+            return redirect(url_for("job_page", job_id=q))
+        flash("ไม่พบรหัสงานนี้")
+    return render_template("track.html")
 
 
 def plan_choice_text(job):
@@ -314,14 +484,39 @@ def download(job_id, kind):
         job = store.load(job_id)
     except ValueError:
         abort(404)
-    if not job or kind not in ("docx", "pdf"):
+    if not job:
         abort(404)
-    name = job["files"].get(f"result_{kind}")
+    # kind may be docx|pdf|pptx|xlsx|png|zip|txt or result index like r0
+    name = None
+    orig = None
+    if kind.startswith("r") and kind[1:].isdigit():
+        results = job.get("results") or []
+        idx = int(kind[1:])
+        if 0 <= idx < len(results):
+            name = results[idx]["name"]
+            orig = results[idx].get("original_name") or name
+            kind = results[idx].get("kind") or os.path.splitext(name)[1].lstrip(".")
+    else:
+        name = (job.get("files") or {}).get(f"result_{kind}")
+        if not name:
+            for r in job.get("results") or []:
+                if r.get("kind") == kind:
+                    name = r["name"]
+                    orig = r.get("original_name")
+                    break
     if not name:
         abort(404)
-    plan = job["fields"].get("plan_no") or ""
-    dl = f"แผนการจัดการเรียนรู้{('ที่' + plan) if plan else ''}_{job_id}.{kind}"
-    return send_file(os.path.join(store.job_dir(job_id), name), as_attachment=True, download_name=dl)
+    path = os.path.join(store.job_dir(job_id), name)
+    if not os.path.isfile(path):
+        abort(404)
+    svc_name = job.get("service_name") or "ผลลัพธ์"
+    plan = (job.get("fields") or {}).get("plan_no") or ""
+    if (job.get("service_id") or "lesson_plan") == "lesson_plan" and kind in ("docx", "pdf"):
+        dl = f"แผนการจัดการเรียนรู้{('ที่' + plan) if plan else ''}_{job_id}.{kind}"
+    else:
+        ext = os.path.splitext(name)[1] or ("." + kind if kind else "")
+        dl = orig or f"{svc_name}_{job_id}{ext}"
+    return send_file(path, as_attachment=True, download_name=dl)
 
 
 # ---------------- admin ----------------
@@ -363,6 +558,24 @@ def admin():
         })
         flash("บันทึกการตั้งค่าเรียบร้อยแล้ว")
         return redirect(url_for("admin") + "#settings")
+    if action == "save_services":
+        updates = {}
+        for s in catalog.all_services(include_disabled=True):
+            sid = s["id"]
+            patch = {
+                "enabled": request.form.get(f"enabled_{sid}") == "1",
+                "collect_payment": request.form.get(f"pay_{sid}") == "1",
+            }
+            price_raw = request.form.get(f"price_{sid}")
+            if price_raw is not None and price_raw != "":
+                patch["price"] = price_raw
+            desc = request.form.get(f"desc_{sid}")
+            if desc is not None:
+                patch["description"] = desc
+            updates[sid] = patch
+        catalog.save_service_overrides(updates)
+        flash("บันทึกบริการเรียบร้อยแล้ว")
+        return redirect(url_for("admin") + "#services")
     if action == "upload_qr":
         f = request.files.get("qr_image")
         if not f or not f.filename:
@@ -397,8 +610,12 @@ def admin():
                 note=request.form.get("note") or "admin override",
                 by="admin",
             )
-            fire_webhook(j["id"])
-            flash(f"อนุมัติการชำระเงินงาน {jid} แล้ว — เข้าคิวแล้ว")
+            if j.pop("_run_auto", False) or j.get("fulfil") == "auto":
+                j = store.try_auto_fulfil(j["id"])
+                flash(f"อนุมัติงาน {jid} แล้ว — ทำอัตโนมัติเสร็จ")
+            else:
+                fire_webhook(j["id"])
+                flash(f"อนุมัติการชำระเงินงาน {jid} แล้ว — เข้าคิวแล้ว")
         except (KeyError, ValueError) as e:
             flash(f"อนุมัติไม่สำเร็จ: {e}")
         return redirect(_admin_back("#payments"))
@@ -417,14 +634,21 @@ def admin():
         from datetime import datetime
         tpl = {"size_kb": round(st.st_size / 1024),
                "mtime": datetime.fromtimestamp(st.st_mtime, store.TZ).strftime("%d/%m/%Y %H:%M")}
-    jobs = list(reversed(store.all_jobs()))[:50]
+    svc_filter = request.args.get("service") or ""
+    allj = store.all_jobs()
+    jobs = list(reversed(allj))
+    if svc_filter:
+        jobs = [j for j in jobs if (j.get("service_id") or "lesson_plan") == svc_filter]
+    jobs = jobs[:50]
     pay_filter = request.args.get("pay_status") or ""
     if pay_filter:
-        pay_jobs = [j for j in reversed(store.all_jobs()) if j["status"] == pay_filter]
+        pay_jobs = [j for j in reversed(allj) if j["status"] == pay_filter]
     else:
-        pay_jobs = [j for j in reversed(store.all_jobs())
+        pay_jobs = [j for j in reversed(allj)
                     if j["status"] in store.PAYMENT_STATUSES
                     or (j.get("payment") and j["status"] in ("queued", "processing", "done", "failed"))]
+    if svc_filter:
+        pay_jobs = [j for j in pay_jobs if (j.get("service_id") or "lesson_plan") == svc_filter]
     pay_jobs = pay_jobs[:100]
     settings = store.load_settings()
     totals = store.payment_totals()
@@ -434,9 +658,17 @@ def admin():
     except ValueError:
         board_page = 1
     board = store.topup_board(request.args.get("board") or "all", board_page)
+    services = catalog.all_services(include_disabled=True)
+    # simple per-service job counts
+    svc_stats = {}
+    for j in allj:
+        sid = j.get("service_id") or "lesson_plan"
+        svc_stats[sid] = svc_stats.get(sid, 0) + 1
     return render_template("admin.html", board=board, tpl=tpl, jobs=jobs, status_th=STATUS_TH,
                            pay_jobs=pay_jobs, pay_filter=pay_filter, settings=settings,
-                           totals=totals, has_qr=has_qr)
+                           totals=totals, has_qr=has_qr, services=services,
+                           svc_filter=svc_filter, svc_stats=svc_stats,
+                           unit_label=catalog.unit_label)
 
 
 @app.get("/admin/qr")
@@ -475,6 +707,12 @@ WORKER_FILE_KINDS = ("template", "source", "result_docx", "result_pdf", "slip")
 def worker_view(job):
     """Job JSON + local paths + token-protected download URLs for remote workers."""
     j = store.with_paths(job)
+    j["service_id"] = job.get("service_id") or "lesson_plan"
+    j["service_name"] = job.get("service_name") or "แผนการจัดการเรียนรู้"
+    j["fulfil"] = job.get("fulfil") or "worker"
+    j["inputs"] = job.get("inputs") or {}
+    j["addons"] = job.get("addons") or []
+    j["results"] = job.get("results") or []
     j["plan_count"] = max(1, int(job.get("plan_count") or 1))  # detected in source file
     j["plan_numbers"] = job.get("plan_numbers") or []
     j["plan_mode"] = job.get("plan_mode") or "all"
@@ -494,6 +732,9 @@ def worker_view(job):
         j["files"] = files
     j["urls"] = {k: url_for("worker_file", job_id=job["id"], kind=k, _external=True)
                  for k in WORKER_FILE_KINDS if files.get(k)}
+    # upload file URLs (generic services)
+    for i, u in enumerate(files.get("uploads") or []):
+        j["urls"][f"upload_{i}"] = url_for("worker_file", job_id=job["id"], kind=f"upload_{i}", _external=True)
     j["urls"]["page"] = url_for("job_page", job_id=job["id"], _external=True)
     return j
 
@@ -511,7 +752,8 @@ def load_or_404(job_id):
 @app.get("/api/worker/next")
 def worker_next():
     require_worker()
-    j = store.claim_next()
+    service = request.args.get("service") or None
+    j = store.claim_next(service_id=service)
     return jsonify({"job": worker_view(j) if j else None})
 
 
@@ -519,7 +761,16 @@ def worker_next():
 def worker_jobs():
     require_worker()
     st = request.args.get("status")
-    jobs = [j for j in store.all_jobs() if not st or j["status"] == st]
+    service = request.args.get("service") or None
+    jobs = []
+    for j in store.all_jobs():
+        if st and j["status"] != st:
+            continue
+        if service and (j.get("service_id") or "lesson_plan") != service:
+            continue
+        if j.get("fulfil") == "auto" and j["status"] in ("queued", "processing"):
+            continue
+        jobs.append(j)
     return jsonify({"jobs": [worker_view(j) for j in jobs]})
 
 
@@ -551,39 +802,70 @@ def worker_requeue(job_id):
 def worker_file(job_id, kind):
     require_worker()
     j = load_or_404(job_id)
-    if kind not in WORKER_FILE_KINDS:
+    name = None
+    orig = None
+    if kind.startswith("upload_") and kind.split("_", 1)[1].isdigit():
+        idx = int(kind.split("_", 1)[1])
+        uploads = (j.get("files") or {}).get("uploads") or []
+        if 0 <= idx < len(uploads):
+            name = uploads[idx]["stored"]
+            orig = uploads[idx].get("original_name") or name
+    elif kind in WORKER_FILE_KINDS:
+        name = j["files"].get(kind)
+        if kind == "slip" and not name:
+            name = (j.get("payment") or {}).get("slip_file")
+        if kind == "slip":
+            orig = (j.get("payment") or {}).get("slip_original_name") or name
+        else:
+            orig = j["files"].get(kind + "_original_name") or name
+    else:
         return jsonify({"error": f"unknown file kind: {kind}"}), 404
-    name = j["files"].get(kind)
-    if kind == "slip" and not name:
-        name = (j.get("payment") or {}).get("slip_file")
     if not name or not os.path.isfile(os.path.join(store.job_dir(job_id), name)):
         msg = "no source file (job is from_scratch: use instructions)" if kind == "source" else f"no {kind} file"
         return jsonify({"error": msg, "kind": kind, "from_scratch": bool(j.get("from_scratch"))}), 404
-    if kind == "slip":
-        orig = (j.get("payment") or {}).get("slip_original_name") or name
-    else:
-        orig = j["files"].get(kind + "_original_name") or name
     return send_file(os.path.join(store.job_dir(job_id), name), as_attachment=True,
-                     download_name=orig)
+                     download_name=orig or name)
 
 
 @app.post("/api/worker/<job_id>/complete")
 def worker_complete(job_id):
     require_worker()
-    load_or_404(job_id)
+    job = load_or_404(job_id)
     data = request.form if request.form else (request.get_json(silent=True) or {})
     docx_f, pdf_f = request.files.get("docx"), request.files.get("pdf")
     docx_path, pdf_path = data.get("docx_path"), data.get("pdf_path")
     for p in (docx_path, pdf_path):
         if p and not os.path.isfile(p):
             return jsonify({"error": f"file not found on server: {p}"}), 400
-    if not docx_f and not docx_path:
-        return jsonify({"error": "multipart field 'docx' (or docx_path) required"}), 400
-    if docx_f and not docx_f.filename.lower().endswith(".docx"):
-        return jsonify({"error": "docx must be a .docx file"}), 400
+    # Multi result files: result / result[] / result_0..
+    multi = []
+    for key in list(request.files.keys()):
+        if key in ("docx", "pdf"):
+            continue
+        if key == "result" or key.startswith("result"):
+            for f in request.files.getlist(key):
+                if f and f.filename:
+                    multi.append(f)
+    sid = job.get("service_id") or "lesson_plan"
+    if sid == "lesson_plan":
+        if not docx_f and not docx_path and not multi:
+            return jsonify({"error": "multipart field 'docx' (or docx_path) required"}), 400
+        if docx_f and not docx_f.filename.lower().endswith(".docx"):
+            return jsonify({"error": "docx must be a .docx file"}), 400
+    else:
+        if not docx_f and not docx_path and not pdf_f and not pdf_path and not multi:
+            return jsonify({"error": "need at least one result file"}), 400
+    extras = []
+    for i, f in enumerate(multi):
+        ext = os.path.splitext(f.filename)[1].lower()
+        stored = f"result_{i}{ext}" if ext else f"result_{i}"
+        kind = store.RESULT_KIND_BY_EXT.get(ext) or (ext.lstrip(".") if ext else "bin")
+        # capture file storage before loop ends
+        extras.append((f.save, stored, kind, f.filename))
     j = store.complete(job_id, docx_src=docx_path, pdf_src=pdf_path,
                        docx_writer=docx_f.save if docx_f else None,
-                       pdf_writer=pdf_f.save if pdf_f else None)
+                       pdf_writer=pdf_f.save if pdf_f else None,
+                       extra_files=extras or None)
     return jsonify({"job": worker_view(j)})
 
 

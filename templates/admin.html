@@ -116,6 +116,32 @@
   {% endif %}
 </div>
 
+
+<div class="card" id="services">
+  <h3 style="margin-top:0">🛠️ บริการ (แคตตาล็อก)</h3>
+  <p class="hint">ราคาเก็บไว้ในระบบ แต่ครูจะเห็นราคาเฉพาะบริการที่เปิด <b>เก็บเงิน</b> — ค่าเริ่มต้นบริการใหม่ปิดเก็บเงิน (ส่งตรงเข้าคิว)</p>
+  <form method="post">
+    <input type="hidden" name="action" value="save_services">
+    <div style="overflow-x:auto"><table>
+      <tr><th>เปิด</th><th>เก็บเงิน</th><th>บริการ</th><th>กลุ่ม</th><th>ราคา</th><th>หน่วย</th><th>ทำโดย</th><th>งาน</th><th>คำอธิบาย</th></tr>
+      {% for s in services %}
+      <tr>
+        <td><input type="checkbox" name="enabled_{{ s.id }}" value="1" {% if s.enabled %}checked{% endif %}></td>
+        <td><input type="checkbox" name="pay_{{ s.id }}" value="1" {% if s.collect_payment %}checked{% endif %} title="เก็บเงิน"></td>
+        <td>{{ s.icon or '' }} {{ s.name }}<div class="mono small">{{ s.id }}</div></td>
+        <td>{{ s.group }}</td>
+        <td><input type="number" name="price_{{ s.id }}" value="{{ s.price }}" min="0" step="1" style="width:5.5rem"></td>
+        <td>{{ unit_label(s.unit) }}</td>
+        <td>{% if s.fulfil == 'auto' %}อัตโนมัติ{% else %}worker{% endif %}</td>
+        <td>{{ svc_stats.get(s.id, 0) }}</td>
+        <td><input type="text" name="desc_{{ s.id }}" value="{{ s.description }}" style="min-width:16rem"></td>
+      </tr>
+      {% endfor %}
+    </table></div>
+    <div class="actions"><button class="btn">💾 บันทึกบริการ</button></div>
+  </form>
+</div>
+
 <div class="card" id="payments">
   <h3 style="margin-top:0">💰 การชำระเงิน</h3>
   <p class="hint">กรอง:
@@ -173,11 +199,27 @@
   </table></div>
 </div>
 
-<div class="card"><h3 style="margin-top:0">งานล่าสุด</h3>
-<div style="overflow-x:auto"><table><tr><th>รหัสงาน</th><th>สถานะ</th><th>ส่งเมื่อ</th><th>ผู้สอน</th><th>ฟอร์มโรงเรียน</th><th>แผนที่</th><th>ไฟล์ข้อมูล</th><th>คำสั่ง / ตัวเลือก</th></tr>
-{% for j in jobs %}<tr><td class="mono"><a href="/job/{{ j.id }}">{{ j.id }}</a></td><td><span class="badge b-{{ j.status }}">{{ status_th[j.status] }}</span></td>
-<td>{{ j.created_at[:16].replace('T',' ') }}</td><td>{{ j.fields.teacher or '-' }}</td><td>{{ j.files.template_original_name or '-' }}</td><td>{{ j.fields.plan_no or '-' }}</td>
-<td>{% if j.files.source %}{{ j.files.source_original_name }}{% if (j.plan_count or 1) > 1 %} ({{ j.plan_count }} แผน{% if j.plan_mode == 'one' %}, ทำแผนที่ {{ j.plan_selected }}{% endif %}){% endif %}{% else %}<span class="badge b-awaiting_choice">ไม่มีไฟล์</span>{% endif %}</td>
-<td style="max-width:320px">{% set ins = j.instructions or j.note %}{% if ins %}<div style="white-space:pre-wrap">{{ ins[:200] }}{% if ins|length > 200 %}…{% endif %}</div>{% endif %}{% for o in j.options or [] %}<span class="tag">✔ {{ o }}</span> {% endfor %}{% if not ins and not j.options %}-{% endif %}</td></tr>
-{% else %}<tr><td colspan="8" class="hint">ยังไม่มีงาน</td></tr>{% endfor %}</table></div></div>
+<div class="card" id="jobs"><h3 style="margin-top:0">งานล่าสุด</h3>
+<p class="hint">กรองบริการ:
+  <a href="/admin#jobs">ทั้งหมด</a>
+  {% for s in services %} · <a href="/admin?service={{ s.id }}#jobs"{% if svc_filter==s.id %} style="font-weight:700"{% endif %}>{{ s.name }}</a>{% endfor %}
+  {% if svc_filter %} · กำลังกรอง: <b>{{ svc_filter }}</b>{% endif %}
+</p>
+<div style="overflow-x:auto"><table><tr><th>รหัสงาน</th><th>บริการ</th><th>สถานะ</th><th>ส่งเมื่อ</th><th>ผู้สอน/ชื่อ</th><th>รายละเอียด</th><th>คำสั่ง / ตัวเลือก</th></tr>
+{% for j in jobs %}<tr>
+<td class="mono"><a href="/job/{{ j.id }}">{{ j.id }}</a></td>
+<td>{{ j.get('service_name') or 'แผนการจัดการเรียนรู้' }}<div class="mono small">{{ j.get('service_id') or 'lesson_plan' }}</div></td>
+<td><span class="badge b-{{ j.status }}">{{ status_th.get(j.status, j.status) }}</span></td>
+<td>{{ j.created_at[:16].replace('T',' ') }}</td>
+<td>{{ j.fields.teacher or (j.inputs or {}).get('teacher_name') or (j.inputs or {}).get('name') or '-' }}</td>
+<td>{% if (j.get('service_id') or 'lesson_plan') == 'lesson_plan' %}
+  {% if j.files.source %}{{ j.files.source_original_name }}{% if (j.plan_count or 1) > 1 %} ({{ j.plan_count }} แผน){% endif %}{% else %}<span class="badge b-awaiting_choice">ไม่มีไฟล์</span>{% endif %}
+{% else %}
+  {% set ups = (j.files or {}).get('uploads') or [] %}
+  {% if ups %}{{ ups|length }} ไฟล์{% else %}-{% endif %}
+  {% if j.fulfil == 'auto' %} · อัตโนมัติ{% endif %}
+  {% if not j.get('collect_payment') %} · ไม่เก็บเงิน{% endif %}
+{% endif %}</td>
+<td style="max-width:320px">{% set ins = j.instructions or j.note or (j.inputs or {}).get('instructions') %}{% if ins %}<div style="white-space:pre-wrap">{{ ins[:200] }}{% if ins|length > 200 %}…{% endif %}</div>{% endif %}{% for o in j.options or [] %}<span class="tag">✔ {{ o }}</span> {% endfor %}{% if not ins and not j.options %}-{% endif %}</td></tr>
+{% else %}<tr><td colspan="7" class="hint">ยังไม่มีงาน</td></tr>{% endfor %}</table></div></div>
 {% endblock %}

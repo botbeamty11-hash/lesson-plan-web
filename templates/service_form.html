@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% block title %}{{ service.name }}{% endblock %}
+{% block content %}
+<div class="card">
+  <p class="crumb"><a href="/">หน้าแรก</a> · <a href="{{ url_for('group_page', group_name=service.group) }}">{{ service.group }}</a> · {{ service.name }}</p>
+  <h1>{{ service.icon or '📄' }} {{ service.name }}</h1>
+  <p class="sub">{{ service.description }}</p>
+  {% if show_price %}
+  <p class="price-note">ราคา {{ '%.0f'|format(service.price) }} บาท {{ unit_label(service.unit) }}</p>
+  {% endif %}
+
+  <form class="svc-form" method="post" action="{{ url_for('service_submit', service_id=service.id) }}"
+        enctype="multipart/form-data" id="sf" novalidate>
+    {% macro render_field(f) %}
+    <div class="field" data-type="{{ f.type }}">
+      <label for="{{ f.id }}">{{ f.label }}{% if f.required %} <span class="req">*</span>{% else %} <span class="opt">(ไม่บังคับ)</span>{% endif %}
+        {% if f.hint %}<br><span class="opt">{{ f.hint }}</span>{% endif %}
+        {% if f.type in ('file','files') and f.accept %}<br><span class="opt">รองรับ {{ f.accept|join(' ') }} · ไม่เกิน {{ max_mb }} MB</span>{% endif %}
+      </label>
+      {% if f.type == 'textarea' %}
+        <textarea id="{{ f.id }}" name="{{ f.id }}" rows="{{ f.rows or 4 }}"
+          placeholder="{{ f.placeholder or '' }}" {% if f.required %}required{% endif %}>{{ f.default or '' }}</textarea>
+      {% elif f.type == 'select' %}
+        <select id="{{ f.id }}" name="{{ f.id }}" {% if f.required %}required{% endif %}>
+          <option value="">— เลือก —</option>
+          {% for c in f.choices or [] %}<option value="{{ c }}" {% if f.default == c %}selected{% endif %}>{{ c }}</option>{% endfor %}
+        </select>
+      {% elif f.type == 'number' %}
+        <input type="number" id="{{ f.id }}" name="{{ f.id }}"
+          value="{{ f.default if f.default is not none else '' }}"
+          {% if f.min is not none %}min="{{ f.min }}"{% endif %}
+          {% if f.max is not none %}max="{{ f.max }}"{% endif %}
+          step="{{ f.step or 1 }}" {% if f.required %}required{% endif %}
+          placeholder="{{ f.placeholder or '' }}">
+      {% elif f.type == 'file' %}
+        <div class="drop" data-for="{{ f.id }}" data-multi="0">
+          <div class="ic">📎</div>
+          <div><b>คลิกเพื่อเลือกไฟล์</b><br>หรือลากไฟล์มาวาง</div>
+          <div class="fn"></div>
+          <input type="file" name="{{ f.id }}" id="{{ f.id }}"
+            accept="{{ (f.accept or [])|join(',') }}" {% if f.required %}required{% endif %}>
+        </div>
+      {% elif f.type == 'files' %}
+        <div class="drop" data-for="{{ f.id }}" data-multi="1">
+          <div class="ic">📎</div>
+          <div><b>คลิกเพื่อเลือกหลายไฟล์</b><br>หรือลากไฟล์มาวาง</div>
+          <div class="fn"></div>
+          <input type="file" name="{{ f.id }}" id="{{ f.id }}" multiple
+            accept="{{ (f.accept or [])|join(',') }}" {% if f.required %}required{% endif %}>
+        </div>
+      {% else %}
+        <input type="text" id="{{ f.id }}" name="{{ f.id }}"
+          value="{{ f.default or '' }}" placeholder="{{ f.placeholder or '' }}"
+          {% if f.required %}required{% endif %}>
+      {% endif %}
+    </div>
+    {% endmacro %}
+
+    <div class="fields-essential">
+      {% for f in required_fields %}{{ render_field(f) }}{% endfor %}
+    </div>
+
+    {% if optional_fields %}
+    <details class="more-opts">
+      <summary>ตัวเลือกเพิ่มเติม <span class="opt">(ไม่บังคับ)</span></summary>
+      <div class="fields-optional">
+        {% for f in optional_fields %}{{ render_field(f) }}{% endfor %}
+      </div>
+    </details>
+    {% endif %}
+
+    <div class="flash" id="err" style="display:none;margin-top:18px"></div>
+    <div class="actions">
+      <button class="btn big" id="sb" type="submit">📤 ส่งงาน</button>
+      <a class="btn sec" href="{{ url_for('group_page', group_name=service.group) }}">ยกเลิก</a>
+    </div>
+  </form>
+</div>
+{% endblock %}
+{% block scripts %}<script>
+const MAX={{ max_mb }}*1048576;
+document.querySelectorAll('.drop').forEach(drop=>{
+  const inp=drop.querySelector('input'),fn=drop.querySelector('.fn');
+  const multi=drop.dataset.multi==='1';
+  const show=()=>{
+    const files=[...inp.files];
+    drop.classList.remove('bad');
+    if(!files.length){fn.textContent='';drop.classList.remove('has');return}
+    for(const f of files){
+      if(f.size>MAX){alert('ไฟล์ใหญ่เกินไป (สูงสุด {{ max_mb }} MB)');inp.value='';fn.textContent='';drop.classList.remove('has');return}
+    }
+    fn.textContent=files.length===1?('✔ '+files[0].name):('✔ '+files.length+' ไฟล์');
+    drop.classList.add('has');
+  };
+  drop.addEventListener('click',()=>inp.click());
+  inp.addEventListener('click',e=>e.stopPropagation());
+  inp.addEventListener('change',show);
+  ['dragover','dragenter'].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.add('over')}));
+  ['dragleave','drop'].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.remove('over')}));
+  drop.addEventListener('drop',ev=>{if(ev.dataTransfer.files.length){inp.files=ev.dataTransfer.files;show()}});
+});
+document.getElementById('sf').addEventListener('submit',e=>{
+  const err=document.getElementById('err');
+  const fail=m=>{e.preventDefault();err.textContent=m;err.style.display='';err.scrollIntoView({behavior:'smooth',block:'center'})};
+  for(const inp of document.querySelectorAll('#sf [required]')){
+    if(inp.type==='file'){
+      if(!inp.files.length){inp.closest('.drop')?.classList.add('bad');return fail('กรุณาอัปโหลดไฟล์ที่จำเป็น')}
+    } else if(!String(inp.value||'').trim()){
+      inp.focus();return fail('กรุณากรอกข้อมูลที่จำเป็น');
+    }
+  }
+  err.style.display='none';
+  const b=document.getElementById('sb');b.disabled=true;b.textContent='⏳ กำลังส่ง...';
+});
+</script>{% endblock %}

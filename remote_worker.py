@@ -7,10 +7,10 @@
   LP_WORK_DIR      (ไม่บังคับ) โฟลเดอร์เก็บไฟล์ที่ดาวน์โหลด ค่าเริ่มต้น ./lp_jobs
 
 คำสั่ง:
-  python3 remote_worker.py list [--all]          งานที่ยังไม่เสร็จ (queued/processing) หรือทั้งหมด
-  python3 remote_worker.py claim [<id>]          รับงานเก่าสุดที่ queued (หรือระบุ id) + ดาวน์โหลดไฟล์ -> JSON
+  python3 remote_worker.py list [--all] [--service ID]   งานที่ยังไม่เสร็จ (queued/processing) หรือทั้งหมด
+  python3 remote_worker.py claim [<id>] [--service ID]   รับงานเก่าสุดที่ queued (หรือระบุ id) + ดาวน์โหลดไฟล์ -> JSON
   python3 remote_worker.py show <id>
-  python3 remote_worker.py complete <id> <result.docx> [result.pdf]
+  python3 remote_worker.py complete <id> <file> [file...]  อัปโหลดผล (docx/pdf หรือหลายไฟล์)
   python3 remote_worker.py fail <id> <ข้อความ>
   python3 remote_worker.py requeue <id>
   python3 remote_worker.py health
@@ -91,9 +91,35 @@ def download_inputs(job):
         with open(dest, "wb") as f:
             f.write(body)
         local[kind] = dest
+    # generic service uploads
+    uploads = (job.get("files") or {}).get("uploads") or []
+    local_uploads = []
+    for i, u in enumerate(uploads):
+        url = (job.get("urls") or {}).get(f"upload_{i}")
+        if not url:
+            continue
+        body = request("GET", url, raw=True, soft404=True)
+        if body is None:
+            continue
+        dest = os.path.join(d, u.get("stored") or f"upload_{i}")
+        with open(dest, "wb") as f:
+            f.write(body)
+        local_uploads.append({"field": u.get("field"), "path": dest, "original_name": u.get("original_name")})
+    local["uploads"] = local_uploads
     with open(os.path.join(d, "job.json"), "w", encoding="utf-8") as f:
         json.dump(job, f, ensure_ascii=False, indent=2)
     return d, local
+
+
+def take_flag(args, name):
+    if name in args:
+        i = args.index(name)
+        if i + 1 < len(args):
+            val = args[i + 1]
+            del args[i:i + 2]
+            return val
+        del args[i]
+    return None
 
 
 
@@ -101,6 +127,8 @@ def short_flags(j):
     """Compact markers for list output: [ไม่มีไฟล์ข้อมูล] [ภาพ] [ใบงาน] [แก้คำ] [คำสั่ง: ...]"""
     opts = j.get("options") or []
     fl = []
+    sid = j.get("service_id") or "lesson_plan"
+    if sid != "lesson_plan": fl.append(f"[{sid}]")
     if j.get("from_scratch"): fl.append("[ไม่มีไฟล์ข้อมูล]")
     for full, short in (("ทำภาพประกอบเพิ่ม", "ภาพ"), ("ทำใบงาน/ใบความรู้แนบท้าย", "ใบงาน"),
                         ("แก้คำผิดและเนื้อหาที่ผิด", "แก้คำ")):
@@ -114,29 +142,46 @@ def main(argv):
         print(__doc__); return 0
     if not BASE or not TOKEN:
         die("ต้องตั้งค่า LP_BASE_URL และ LP_WORKER_TOKEN")
-    cmd, args = argv[0], argv[1:]
+    cmd, args = argv[0], list(argv[1:])
+    service = take_flag(args, "--service")
     if cmd == "health":
         pr(request("GET", "/healthz")); return 0
     if cmd == "list":
-        jobs = request("GET", "/api/worker/jobs")["jobs"]
+        q = "/api/worker/jobs"
+        params = []
+        if service:
+            params.append("service=" + service)
+        if params:
+            q += "?" + "&".join(params)
+        jobs = request("GET", q)["jobs"]
         if "--all" not in args:
             jobs = [j for j in jobs if j["status"] in ("queued", "processing")]
         for j in jobs:
-            f = j["fields"]
-            print(f'{j["id"]}  {j["status"]:<10}  {j["created_at"]}  จำนวนแผน={j.get("plan_count") or 1}  '
-                  f'ทำ={("แผนที่ " + str(j.get("plan_selected"))) if j.get("plan_mode") == "one" else "ทั้งหมด"}  แผนที่={f.get("plan_no") or "-"}  '
-                  f'ผู้สอน={f.get("teacher") or "-"}  ฟอร์ม={j["files"].get("template_original_name") or "-"}  '
-                  f'ข้อมูล={j["files"].get("source_original_name") or "-"}  {short_flags(j)}'.rstrip())
+            f = j.get("fields") or {}
+            sid = j.get("service_id") or "lesson_plan"
+            sname = j.get("service_name") or sid
+            teacher = f.get("teacher") or (j.get("inputs") or {}).get("teacher_name") or (j.get("inputs") or {}).get("name") or "-"
+            print(f'{j["id"]}  {j["status"]:<10}  {j.get("created_at") or "-"}  svc={sname}  '
+                  f'ผู้สอน={teacher}  {short_flags(j)}'.rstrip())
         if not jobs:
             print("(ไม่มีงาน)")
         return 0
     if cmd == "claim":
-        job = (request("POST", f"/api/worker/{args[0]}/claim", data=b"") if args
-               else request("GET", "/api/worker/next"))["job"]
+        if args and not args[0].startswith("--"):
+            job = request("POST", f"/api/worker/{args[0]}/claim", data=b"")["job"]
+        else:
+            q = "/api/worker/next"
+            if service:
+                q += "?service=" + service
+            job = request("GET", q)["job"]
         if not job:
             print("null"); return 1
         d, local = download_inputs(job)
-        pr({"id": job["id"], "status": job["status"], "fields": job["fields"], "note": job.get("note") or "",
+        pr({"id": job["id"], "status": job["status"],
+            "service_id": job.get("service_id") or "lesson_plan",
+            "service_name": job.get("service_name") or "",
+            "inputs": job.get("inputs") or {},
+            "fields": job.get("fields") or {}, "note": job.get("note") or "",
             "plan_count": job.get("plan_count") or 1, "plan_numbers": job.get("plan_numbers") or [],
             "plan_mode": job.get("plan_mode") or "all", "plan_selected": job.get("plan_selected"),
             "effective_plan_count": job.get("effective_plan_count") or 1,
@@ -144,22 +189,41 @@ def main(argv):
             "from_scratch": bool(job.get("from_scratch")),
             "instructions": job.get("instructions") or job.get("note") or "",
             "options": job.get("options") or [], "eta_factor": job.get("eta_factor") or 1.0,
-            "original_names": {"template": job["files"].get("template_original_name"),
-                               "source": job["files"].get("source_original_name")},
+            "original_names": {"template": (job.get("files") or {}).get("template_original_name"),
+                               "source": (job.get("files") or {}).get("source_original_name")},
             "local_dir": d, "local_paths": local}); return 0
     if cmd == "show" and args:
         pr(request("GET", f"/api/worker/{args[0]}")["job"]); return 0
     if cmd == "complete" and len(args) >= 2:
-        files = {"docx": args[1]}
-        if len(args) > 2:
-            files["pdf"] = args[2]
-        for p in files.values():
+        jid = args[0]
+        paths = args[1:]
+        for p in paths:
             if not os.path.isfile(p):
                 die(f"file not found: {p}")
+        files = {}
+        # classic: docx [pdf]
+        if (len(paths) <= 2 and paths[0].lower().endswith(".docx")
+                and (len(paths) == 1 or paths[1].lower().endswith(".pdf"))):
+            files["docx"] = paths[0]
+            if len(paths) > 1:
+                files["pdf"] = paths[1]
+        else:
+            used_docx = used_pdf = False
+            ri = 0
+            for p in paths:
+                ext = os.path.splitext(p)[1].lower()
+                if ext == ".docx" and not used_docx:
+                    files["docx"] = p; used_docx = True
+                elif ext == ".pdf" and not used_pdf:
+                    files["pdf"] = p; used_pdf = True
+                else:
+                    files[f"result_{ri}"] = p
+                    ri += 1
         body, ctype = multipart({}, files)
-        j = request("POST", f"/api/worker/{args[0]}/complete", data=body, headers={"Content-Type": ctype})["job"]
-        pr({"id": j["id"], "status": j["status"], "page": j["urls"].get("page"),
-            "has_pdf": bool(j["files"].get("result_pdf"))}); return 0
+        j = request("POST", f"/api/worker/{jid}/complete", data=body, headers={"Content-Type": ctype})["job"]
+        pr({"id": j["id"], "status": j["status"], "page": (j.get("urls") or {}).get("page"),
+            "results": j.get("results") or [],
+            "has_pdf": bool((j.get("files") or {}).get("result_pdf"))}); return 0
     if cmd == "fail" and len(args) >= 2:
         j = request("POST", f"/api/worker/{args[0]}/fail", data=json.dumps({"message": " ".join(args[1:])}).encode(),
                     headers={"Content-Type": "application/json"})["job"]

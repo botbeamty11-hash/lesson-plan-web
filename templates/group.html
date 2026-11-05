@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}{{ group }} — บริการครู{% endblock %}
+{% block content %}
+<div class="card">
+  <p class="crumb"><a href="/">หน้าแรก</a> · {{ group }}</p>
+  <h1><span class="gc-icon inline">{{ icon }}</span> {{ group }}</h1>
+  <p class="sub">เลือกบริการด้านล่าง</p>
+  <ul class="svc-list">
+  {% for s in services %}
+    <li>
+      <a href="{% if s.special_form %}{{ url_for('plan_form') }}{% else %}{{ url_for('service_form', service_id=s.id) }}{% endif %}">
+        <span class="svc-ico">{{ s.icon or '📄' }}</span>
+        <span class="svc-text">
+          <b>{{ s.name }}</b>
+          <span class="svc-desc">{{ s.description }}</span>
+        </span>
+        <span class="svc-go">›</span>
+      </a>
+    </li>
+  {% else %}
+    <li class="hint">ยังไม่มีบริการในกลุ่มนี้</li>
+  {% endfor %}
+  </ul>
+</div>
+{% endblock %}

@@ -1,7 +1,8 @@
 {% extends "base.html" %}
 {% block content %}
 <form class="card" method="post" action="/submit" enctype="multipart/form-data" id="f" novalidate>
-  <h1>ส่งข้อมูลเพื่อจัดทำแผนการจัดการเรียนรู้</h1>
+  <p class="crumb"><a href="/">หน้าแรก</a> · แผนการสอน</p>
+  <h1>📘 แผนการจัดการเรียนรู้</h1>
   <p class="sub">อัปโหลดฟอร์มแผนการสอนของโรงเรียน (บังคับ) และไฟล์ข้อมูลต้นฉบับ (ถ้ามี) ระบบจะนำข้อมูลมาจัดลงฟอร์มของโรงเรียนให้ — ถ้าไม่มีไฟล์ข้อมูล ให้พิมพ์คำสั่งเพิ่มเติมว่าต้องการแผนวิชา/ชั้น/เรื่องอะไร</p>
   <div class="grid">
   {% for key, label in uploads %}
@@ -19,26 +20,37 @@
   <h3 style="margin:28px 0 10px">คำสั่งเพิ่มเติมถึงผู้จัดทำ <span class="hint" style="font-weight:400" id="instr-req">(ไม่บังคับ ถ้าแนบไฟล์ข้อมูลแล้ว)</span></h3>
   <textarea id="instructions" name="instructions" class="big-ta" rows="7"
     placeholder="ตัวอย่าง:&#10;• เพิ่มภาพประกอบ&#10;• ปรับกิจกรรมให้สั้นลง&#10;• ทำแผนที่ 1 เรื่อง เศษส่วน ป.4&#10;(ถ้าไม่แนบไฟล์ข้อมูล กรุณาระบุอย่างน้อย วิชา / ชั้น / เรื่อง)"></textarea>
-  <div class="opts">
-    {% for o in options %}<label class="chk"><input type="checkbox" name="options" value="{{ o }}"> {{ o }}</label>{% endfor %}
-  </div>
-  <p class="hint" id="slow-hint" style="display:none">⏱️ งานที่ไม่มีไฟล์ข้อมูล หรือเลือก "ทำภาพประกอบเพิ่ม" จะใช้เวลานานขึ้นประมาณ 1.5 เท่า</p>
-  <h3 style="margin:28px 0 10px">รายละเอียดแผน <span class="hint" style="font-weight:400">(ไม่บังคับ)</span></h3>
-  <div class="note">ℹ️ <b>ช่องด้านล่างทั้งหมดไม่บังคับ — ไม่กรอกก็ได้</b><br>ช่องที่เว้นว่างไว้ จะคงเว้นว่างไว้ในแผนการสอนตามฟอร์มของโรงเรียนเหมือนเดิม (บังคับเฉพาะไฟล์ที่ 1 — ถ้าไม่แนบไฟล์ที่ 2 ต้องพิมพ์คำสั่งเพิ่มเติมด้านบน)</div>
-  <div class="grid">
-    <div><label for="teacher">ชื่อผู้สอน</label><input type="text" id="teacher" name="teacher" placeholder="ชื่อ-นามสกุล"></div>
-    <div><label>สอนวันที่</label>
-      <div class="dt">
-        <select name="teach_day" aria-label="วัน"><option value="">วัน</option>{% for d in range(1,32) %}<option value="{{ d }}">{{ d }}</option>{% endfor %}</select>
-        <select name="teach_month" aria-label="เดือน"><option value="">เดือน</option>{% for m in months %}<option value="{{ m }}">{{ m }}</option>{% endfor %}</select>
-        <select name="teach_year" aria-label="ปี พ.ศ."><option value="">ปี พ.ศ.</option>{% for y in years %}<option value="{{ y }}">{{ y }}</option>{% endfor %}</select>
-      </div></div>
-    {% for key, label, typ in fields if key != 'teacher' %}
-    <div><label for="{{ key }}">{{ label }}</label>
-      <input type="{{ typ }}" id="{{ key }}" name="{{ key }}" {% if typ=='number' %}min="1"{% endif %}
-        placeholder="{% if key=='semester' %}เช่น 1 หรือ 2{% elif key=='year' %}เช่น {{ this_year }}{% elif key=='plan_no' %}เช่น 1{% elif key=='unit_no' %}เช่น 1{% endif %}"></div>
-    {% endfor %}
-  </div>
+  <details class="more-opts">
+    <summary>ตัวเลือกเพิ่มเติม <span class="opt">(ไม่บังคับ)</span></summary>
+    <div class="opts">
+      {% for o in options %}<label class="chk"><input type="checkbox" name="options" value="{{ o }}"> {{ o }}</label>{% endfor %}
+    </div>
+    {% if addons %}
+    <div class="opts addons" style="margin-top:10px">
+      <p class="hint" style="margin:0 0 6px">บริการเสริม (คิดเพิ่มเมื่อเปิดเก็บเงิน)</p>
+      {% for a in addons %}
+      <label class="chk"><input type="checkbox" name="addons" value="{{ a.id }}"> {{ a.name }}</label>
+      {% endfor %}
+    </div>
+    {% endif %}
+    <p class="hint" id="slow-hint" style="display:none">⏱️ งานที่ไม่มีไฟล์ข้อมูล หรือเลือก "ทำภาพประกอบเพิ่ม" จะใช้เวลานานขึ้นประมาณ 1.5 เท่า</p>
+    <h3 style="margin:18px 0 10px">รายละเอียดแผน</h3>
+    <div class="note">ℹ️ ช่องด้านล่างทั้งหมดไม่บังคับ — ไม่กรอกก็ได้</div>
+    <div class="grid">
+      <div><label for="teacher">ชื่อผู้สอน</label><input type="text" id="teacher" name="teacher" placeholder="ชื่อ-นามสกุล"></div>
+      <div><label>สอนวันที่</label>
+        <div class="dt">
+          <select name="teach_day" aria-label="วัน"><option value="">วัน</option>{% for d in range(1,32) %}<option value="{{ d }}">{{ d }}</option>{% endfor %}</select>
+          <select name="teach_month" aria-label="เดือน"><option value="">เดือน</option>{% for m in months %}<option value="{{ m }}">{{ m }}</option>{% endfor %}</select>
+          <select name="teach_year" aria-label="ปี พ.ศ."><option value="">ปี พ.ศ.</option>{% for y in years %}<option value="{{ y }}">{{ y }}</option>{% endfor %}</select>
+        </div></div>
+      {% for key, label, typ in fields if key != 'teacher' %}
+      <div><label for="{{ key }}">{{ label }}</label>
+        <input type="{{ typ }}" id="{{ key }}" name="{{ key }}" {% if typ=='number' %}min="1"{% endif %}
+          placeholder="{% if key=='semester' %}เช่น 1 หรือ 2{% elif key=='year' %}เช่น {{ this_year }}{% elif key=='plan_no' %}เช่น 1{% elif key=='unit_no' %}เช่น 1{% endif %}"></div>
+      {% endfor %}
+    </div>
+  </details>
   <div class="flash" id="err" style="display:none;margin-top:18px"></div>
   <div class="actions"><button class="btn big" id="sb" type="submit">📤 ส่งข้อมูล</button></div>
 </form>
