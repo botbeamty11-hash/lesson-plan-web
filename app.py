@@ -22,6 +22,7 @@ ALLOWED = {".doc", ".docx", ".pdf"}
 ALLOWED_SERVICE = {".doc", ".docx", ".pdf", ".pptx", ".xlsx", ".xls", ".csv",
                    ".png", ".jpg", ".jpeg", ".webp", ".gif", ".tif", ".tiff", ".txt", ".zip"}
 MAX_MB = 20
+MAX_SOURCE_FILES = 10
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
 WORKER_TOKEN = os.environ.get("WORKER_TOKEN", "")
 GOOGLE_CLIENT_ID = (os.environ.get("GOOGLE_CLIENT_ID") or "").strip()
@@ -39,7 +40,7 @@ if len(_secret) < 16:
     log.warning("SECRET_KEY missing/short: using a random key (admin sessions reset on restart)")
     _secret = os.urandom(32)
 app.secret_key = _secret
-app.config["MAX_CONTENT_LENGTH"] = (10 * MAX_MB + 2) * 1024 * 1024  # multi-file service uploads
+app.config["MAX_CONTENT_LENGTH"] = ((MAX_SOURCE_FILES + 1) * MAX_MB + 2) * 1024 * 1024  # template + up to 10 source files
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 app.config["SESSION_COOKIE_SECURE"] = os.environ.get("LP_COOKIE_SECURE", "1") not in ("0", "false", "False")
@@ -256,8 +257,9 @@ def plan_form():
         description="อัปโหลดฟอร์มโรงเรียน แล้วให้ครูดีจัดทำแผนการจัดการเรียนรู้ Word ให้ — รองรับสื่อ ใบงาน ข้อสอบพร้อมเฉลย",
         path="/plan",
     )
-    return render_template("index.html", fields=FIELDS, max_mb=MAX_MB, uploads=UPLOADS,
-                           required_uploads=REQUIRED_UPLOADS, options=OPTIONS, min_instr=MIN_INSTRUCTIONS,
+    return render_template("index.html", fields=FIELDS, max_mb=MAX_MB, max_files=MAX_SOURCE_FILES,
+                           uploads=UPLOADS, required_uploads=REQUIRED_UPLOADS, options=OPTIONS,
+                           min_instr=MIN_INSTRUCTIONS,
                            months=THAI_MONTHS, years=list(range(be - 1, be + 3)), this_year=be,
                            addons=svc.get("addons") or [], service=svc, meta=meta)
 
@@ -270,6 +272,21 @@ def submit():
     options = [o for o in OPTIONS if o in request.form.getlist("options")]
     addon_ids = request.form.getlist("addons")
     for kind, label in UPLOADS:
+        if kind == "source":
+            flist = [f for f in request.files.getlist(kind) if f and f.filename]
+            if not flist:
+                continue
+            if len(flist) > MAX_SOURCE_FILES:
+                flash(f"ไฟล์ที่ 2: เลือกได้สูงสุด {MAX_SOURCE_FILES} ไฟล์")
+                return redirect(url_for("plan_form"))
+            saved = []
+            for f in flist:
+                if os.path.splitext(f.filename)[1].lower() not in ALLOWED:
+                    flash(f"{label.split(':')[0]}: รองรับเฉพาะไฟล์ .doc, .docx และ .pdf เท่านั้น")
+                    return redirect(url_for("plan_form"))
+                saved.append(_save_upload_factory(f))
+            ups[kind] = saved
+            continue
         f = request.files.get(kind)
         if not f or not f.filename:
             if kind not in REQUIRED_UPLOADS:
@@ -295,11 +312,18 @@ def submit():
                            instructions=instructions, options=options, addons=addon_ids,
                            user_id=u["id"] if u else None)
     d = store.job_dir(job["id"])
-    for kind in ("template", "source"):
-        if job["files"].get(kind) and os.path.getsize(os.path.join(d, job["files"][kind])) > MAX_MB * 1024 * 1024:
-            shutil.rmtree(d)
-            flash(f"ไฟล์ใหญ่เกินไป (สูงสุด {MAX_MB} MB ต่อไฟล์)")
-            return redirect(url_for("plan_form"))
+    oversized = False
+    if job["files"].get("template") and os.path.getsize(os.path.join(d, job["files"]["template"])) > MAX_MB * 1024 * 1024:
+        oversized = True
+    for entry in store.source_file_entries(job):
+        path = os.path.join(d, entry["stored"])
+        if os.path.isfile(path) and os.path.getsize(path) > MAX_MB * 1024 * 1024:
+            oversized = True
+            break
+    if oversized:
+        shutil.rmtree(d)
+        flash(f"ไฟล์ใหญ่เกินไป (สูงสุด {MAX_MB} MB ต่อไฟล์)")
+        return redirect(url_for("plan_form"))
     # Multi-plan: let the teacher choose first; charge after choice when free_mode.
     if job["status"] == "awaiting_choice":
         return redirect(url_for("choose_plan", job_id=job["id"]))
@@ -364,6 +388,8 @@ def _parse_service_form(service):
             flist = [f for f in flist if f and f.filename]
             if required and not flist:
                 return None, None, f"กรุณาอัปโหลด{field.get('label') or fid}"
+            if len(flist) > MAX_SOURCE_FILES:
+                return None, None, f"{field.get('label') or fid}: เลือกได้สูงสุด {MAX_SOURCE_FILES} ไฟล์"
             accept = {a.lower() for a in (field.get("accept") or [])}
             saved = []
             for f in flist:
@@ -454,7 +480,7 @@ def service_form(service_id):
         og_type="product",
     )
     return render_template("service_form.html", service=svc, required_fields=required,
-                           optional_fields=optional, max_mb=MAX_MB,
+                           optional_fields=optional, max_mb=MAX_MB, max_files=MAX_SOURCE_FILES,
                            unit_label=catalog.unit_label,
                            show_price=bool(svc.get("collect_payment")),
                            meta=meta, jsonld_service=True)
@@ -1306,6 +1332,15 @@ def worker_view(job):
     # upload file URLs (generic services)
     for i, u in enumerate(files.get("uploads") or []):
         j["urls"][f"upload_{i}"] = url_for("worker_file", job_id=job["id"], kind=f"upload_{i}", _external=True)
+    source_entries = store.source_file_entries(job)
+    if source_entries and not files.get("sources"):
+        files = dict(files)
+        files["sources"] = source_entries
+        j["files"] = files
+    for i, _s in enumerate(source_entries):
+        if i == 0:
+            continue  # first file already exposed as urls["source"]
+        j["urls"][f"source_{i}"] = url_for("worker_file", job_id=job["id"], kind=f"source_{i}", _external=True)
     j["urls"]["page"] = url_for("job_page", job_id=job["id"], _external=True)
     return j
 
@@ -1375,7 +1410,13 @@ def worker_file(job_id, kind):
     j = load_or_404(job_id)
     name = None
     orig = None
-    if kind.startswith("upload_") and kind.split("_", 1)[1].isdigit():
+    if kind.startswith("source_") and kind.split("_", 1)[1].isdigit():
+        idx = int(kind.split("_", 1)[1])
+        entries = store.source_file_entries(j)
+        if 0 <= idx < len(entries):
+            name = entries[idx]["stored"]
+            orig = entries[idx].get("original_name") or name
+    elif kind.startswith("upload_") and kind.split("_", 1)[1].isdigit():
         idx = int(kind.split("_", 1)[1])
         uploads = (j.get("files") or {}).get("uploads") or []
         if 0 <= idx < len(uploads):

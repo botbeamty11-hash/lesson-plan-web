@@ -44,7 +44,7 @@
     <div class="field" data-type="{{ f.type }}">
       <label for="{{ f.id }}">{{ f.label }}{% if f.required %} <span class="req">*</span>{% else %} <span class="opt">(ไม่บังคับ)</span>{% endif %}
         {% if f.hint %}<br><span class="opt">{{ f.hint }}</span>{% endif %}
-        {% if f.type in ('file','files') and f.accept %}<br><span class="opt">รองรับ {{ f.accept|join(' ') }} · ไม่เกิน {{ max_mb }} MB</span>{% endif %}
+        {% if f.type in ('file','files') and f.accept %}<br><span class="opt">รองรับ {{ f.accept|join(' ') }} · ไม่เกิน {{ max_mb }} MB{% if f.type == 'files' %} ต่อไฟล์ · เลือกได้หลายไฟล์ (สูงสุด {{ max_files }} ไฟล์){% endif %}</span>{% elif f.type == 'files' %}<br><span class="opt">ไม่เกิน {{ max_mb }} MB ต่อไฟล์ · เลือกได้หลายไฟล์ (สูงสุด {{ max_files }} ไฟล์)</span>{% endif %}
       </label>
       {% if f.type == 'textarea' %}
         <textarea id="{{ f.id }}" name="{{ f.id }}" rows="{{ f.rows or 4 }}"
@@ -107,26 +107,51 @@
 </div>
 {% endblock %}
 {% block scripts %}<script>
-const MAX={{ max_mb }}*1048576;
+const MAX={{ max_mb }}*1048576, MAXFILES={{ max_files }};
+function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function assign(inp,files){const dt=new DataTransfer();files.forEach(f=>dt.items.add(f));inp.files=dt.files}
 document.querySelectorAll('.drop').forEach(drop=>{
   const inp=drop.querySelector('input'),fn=drop.querySelector('.fn');
   const multi=drop.dataset.multi==='1';
+  let held=[];
+  const valid=f=>{
+    if(f.size>MAX){alert('ไฟล์ใหญ่เกินไป (สูงสุด {{ max_mb }} MB ต่อไฟล์)');return false}
+    return true;
+  };
   const show=()=>{
     const files=[...inp.files];
     drop.classList.remove('bad');
-    if(!files.length){fn.textContent='';drop.classList.remove('has');return}
-    for(const f of files){
-      if(f.size>MAX){alert('ไฟล์ใหญ่เกินไป (สูงสุด {{ max_mb }} MB)');inp.value='';fn.textContent='';drop.classList.remove('has');return}
+    if(!files.length){fn.innerHTML='';drop.classList.remove('has');return}
+    if(multi){
+      fn.innerHTML=files.map((f,i)=>'<div class="file-row"><span>✔ '+esc(f.name)+' ('+(f.size/1048576).toFixed(2)+' MB)</span><button type="button" class="rm" data-i="'+i+'" aria-label="ลบไฟล์">×</button></div>').join('');
+    } else {
+      fn.textContent=files.length===1?('✔ '+files[0].name):('✔ '+files.length+' ไฟล์');
     }
-    fn.textContent=files.length===1?('✔ '+files[0].name):('✔ '+files.length+' ไฟล์');
     drop.classList.add('has');
   };
-  drop.addEventListener('click',()=>inp.click());
+  const merge=incoming=>{
+    const add=[...incoming].filter(valid);
+    if(!add.length){if(!held.length){assign(inp,[]);show()}return}
+    if(!multi){held=[add[0]];assign(inp,held);show();return}
+    const cur=held.slice();
+    for(const f of add){
+      if(cur.length>=MAXFILES){alert('เลือกได้สูงสุด '+MAXFILES+' ไฟล์');break}
+      if(cur.some(x=>x.name===f.name&&x.size===f.size&&x.lastModified===f.lastModified)) continue;
+      cur.push(f);
+    }
+    held=cur;assign(inp,held);show();
+  };
+  drop.addEventListener('click',e=>{if(e.target.closest('.rm'))return;inp.click()});
+  fn.addEventListener('click',e=>{
+    const btn=e.target.closest('.rm');if(!btn)return;
+    e.preventDefault();e.stopPropagation();
+    const i=+btn.dataset.i;held=[...inp.files];held.splice(i,1);assign(inp,held);show();
+  });
   inp.addEventListener('click',e=>e.stopPropagation());
-  inp.addEventListener('change',show);
+  inp.addEventListener('change',()=>merge(inp.files));
   ['dragover','dragenter'].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.add('over')}));
   ['dragleave','drop'].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.remove('over')}));
-  drop.addEventListener('drop',ev=>{if(ev.dataTransfer.files.length){inp.files=ev.dataTransfer.files;show()}});
+  drop.addEventListener('drop',ev=>{if(ev.dataTransfer.files.length)merge(ev.dataTransfer.files)});
 });
 document.getElementById('sf').addEventListener('submit',e=>{
   const err=document.getElementById('err');

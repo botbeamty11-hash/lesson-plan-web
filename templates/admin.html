@@ -307,7 +307,7 @@
 <td>{{ j.created_at[:16].replace('T',' ') }}</td>
 <td>{{ j.fields.teacher or (j.inputs or {}).get('teacher_name') or (j.inputs or {}).get('name') or '-' }}</td>
 <td>{% if (j.get('service_id') or 'lesson_plan') == 'lesson_plan' %}
-  {% if j.files.source %}{{ j.files.source_original_name }}{% if (j.plan_count or 1) > 1 %} ({{ j.plan_count }} แผน){% endif %}{% else %}<span class="badge b-awaiting_choice">ไม่มีไฟล์</span>{% endif %}
+  {% if j.files.source %}{% set srcs = (j.files.get('sources') or []) %}{% if srcs %}{% for s in srcs %}{{ s.original_name }}{% if not loop.last %}, {% endif %}{% endfor %}{% else %}{{ j.files.source_original_name }}{% endif %}{% if (j.plan_count or 1) > 1 %} ({{ j.plan_count }} แผน){% endif %}{% else %}<span class="badge b-awaiting_choice">ไม่มีไฟล์</span>{% endif %}
 {% else %}
   {% set ups = (j.files or {}).get('uploads') or [] %}
   {% if ups %}{{ ups|length }} ไฟล์{% else %}-{% endif %}

@@ -93,6 +93,9 @@ textarea{min-height:100px;resize:vertical}
 .drop input{display:none}
 .drop.has{border-color:var(--ok);border-style:solid;background:#f0fdf4}
 .drop.has .fn{color:var(--ok)}
+.drop .file-row{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:6px;padding:6px 10px;background:#fff;border:1px solid var(--bd);border-radius:8px;font-size:.9rem;text-align:left;font-weight:600;color:var(--txt)}
+.drop .file-row .rm{border:0;background:transparent;color:var(--err);cursor:pointer;font-weight:700;font-size:1.15rem;line-height:1;padding:0 4px;flex-shrink:0}
+.drop .file-row .rm:hover{color:#991b1b}
 .drop.bad{border-color:var(--err);background:#fef2f2}
 .hint{color:var(--mut);font-size:.88rem}
 .muted{color:var(--mut)}.small{font-size:.8rem;word-break:break-all}

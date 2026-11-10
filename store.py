@@ -35,6 +35,53 @@ RESULT_KIND_BY_EXT = {
     ".png": "png", ".jpg": "jpg", ".jpeg": "jpg", ".zip": "zip", ".txt": "txt",
 }
 
+
+def source_file_entries(job):
+    """Source data files for a job.
+
+    New jobs store every file in files.sources[]. Older jobs only have
+    files.source / files.source_original_name — both shapes are returned
+    as a list of {stored, original_name, index}.
+    """
+    files = (job or {}).get("files") or {}
+    sources = files.get("sources")
+    if sources:
+        out = []
+        for i, s in enumerate(sources):
+            if not s:
+                continue
+            if isinstance(s, dict):
+                stored = s.get("stored")
+                if not stored:
+                    continue
+                out.append({
+                    "stored": stored,
+                    "original_name": s.get("original_name") or stored,
+                    "index": s.get("index", i),
+                })
+        return out
+    if files.get("source"):
+        return [{
+            "stored": files["source"],
+            "original_name": files.get("source_original_name") or files["source"],
+            "index": 0,
+        }]
+    return []
+
+
+def source_original_names(job):
+    return [s["original_name"] for s in source_file_entries(job)]
+
+
+def _upload_items(val):
+    """Normalize a single (name, save_fn) or a list of them into a list."""
+    if not val:
+        return []
+    if isinstance(val, list):
+        return [x for x in val if x]
+    return [val]
+
+
 os.makedirs(JOBS_DIR, exist_ok=True)
 os.makedirs(TEMPLATE_DIR, exist_ok=True)
 if not os.path.exists(TEMPLATE_PATH) and os.path.exists(DEFAULT_TEMPLATE_SRC):
@@ -692,24 +739,36 @@ def try_auto_fulfil(job_id):
 
 
 def create_job(uploads, fields, note, plan_counter=None, instructions=None, options=None, addons=None, user_id=None):
-    """uploads: {"template": (filename, save_fn), "source": (filename, save_fn)}.
+    """uploads: {"template": (filename, save_fn), "source": (filename, save_fn) or a list of those}.
     save_fn(dest_path) writes the uploaded file. If no template upload is given,
     the admin default template (data/template/main.docx) is copied as a fallback.
-    addons: optional list of {id,name,price,unit} upsells (slides/worksheet/test)."""
+    addons: optional list of {id,name,price,unit} upsells (slides/worksheet/test).
+    Multiple source files are stored as source.<ext>, source_1.<ext>, …; the first
+    is also mirrored as files.source for older workers."""
     job_id = new_job_id()
     d = job_dir(job_id)
     os.makedirs(d)
     files = {"source": None, "source_original_name": None,
              "template": None, "template_original_name": None,
              "template_is_default": False,
-             "result_docx": None, "result_pdf": None, "slip": None}
-    for kind in ("template", "source"):
-        if kind in uploads and uploads[kind]:
-            fname, save_fn = uploads[kind]
-            stored = kind + os.path.splitext(fname)[1].lower()
-            save_fn(os.path.join(d, stored))
-            files[kind] = stored
-            files[kind + "_original_name"] = fname
+             "result_docx": None, "result_pdf": None, "slip": None,
+             "sources": []}
+    tpl_items = _upload_items((uploads or {}).get("template"))
+    if tpl_items:
+        fname, save_fn = tpl_items[0]
+        stored = "template" + os.path.splitext(fname)[1].lower()
+        save_fn(os.path.join(d, stored))
+        files["template"] = stored
+        files["template_original_name"] = fname
+    for idx, item in enumerate(_upload_items((uploads or {}).get("source"))):
+        fname, save_fn = item
+        ext = os.path.splitext(fname)[1].lower()
+        stored = f"source{ext}" if idx == 0 else f"source_{idx}{ext}"
+        save_fn(os.path.join(d, stored))
+        files["sources"].append({"stored": stored, "original_name": fname, "index": idx})
+        if idx == 0:
+            files["source"] = stored
+            files["source_original_name"] = fname
     if not files["template"] and os.path.exists(TEMPLATE_PATH):
         shutil.copy2(TEMPLATE_PATH, os.path.join(d, "template.docx"))
         files["template"] = "template.docx"
@@ -761,10 +820,20 @@ def create_job(uploads, fields, note, plan_counter=None, instructions=None, opti
         "effective_plan_count": 1,  # plans actually produced (ETA)
         "error": None,
     }
-    if plan_counter and files["source"]:
+    source_paths = [os.path.join(d, e["stored"]) for e in files["sources"]]
+    if plan_counter and source_paths:
         try:
-            cnt, nums = plan_counter(os.path.join(d, files["source"]))
-            job["plan_count"], job["plan_numbers"] = max(1, int(cnt)), list(nums)
+            total, nums = 0, []
+            for p in source_paths:
+                cnt, ns = plan_counter(p)
+                total += max(1, int(cnt))
+                nums.extend(list(ns) or [])
+            seen, uniq = set(), []
+            for n in nums:
+                if n not in seen:
+                    seen.add(n)
+                    uniq.append(n)
+            job["plan_count"], job["plan_numbers"] = max(1, total), uniq
         except Exception:
             job["plan_count"], job["plan_numbers"] = 1, []
     job["effective_plan_count"] = job["plan_count"]
@@ -781,10 +850,12 @@ def create_job(uploads, fields, note, plan_counter=None, instructions=None, opti
         job["price_breakdown"] = breakdown
     except Exception:
         job["price_breakdown"] = None
-    if job["plan_count"] > 1:
+    # The choose-one-plan UI is built around plan numbers in a single file.
+    # Several source files are treated as "make all of them".
+    if job["plan_count"] > 1 and len(files["sources"]) <= 1:
         job["status"] = "awaiting_choice"  # submitter must choose one plan vs all before paying
     else:
-        # single plan: go straight to payment (not the work queue)
+        # single plan, or several source files: go straight to payment (not the work queue)
         _init_payment(job)
         job["status"] = "awaiting_payment"
     with lock():
@@ -852,6 +923,10 @@ def with_paths(job):
     for u in (job.get("files") or {}).get("uploads") or []:
         uploads.append({**u, "path": os.path.join(d, u["stored"])})
     j["paths"]["uploads"] = uploads
+    sources = []
+    for s in source_file_entries(job):
+        sources.append({**s, "path": os.path.join(d, s["stored"])})
+    j["paths"]["sources"] = sources
     results = []
     for r in job.get("results") or []:
         results.append({**r, "path": os.path.join(d, r["name"])})

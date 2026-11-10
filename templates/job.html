@@ -29,7 +29,7 @@
     <dt>บริการ</dt><dd>{{ job.get('service_name') or 'แผนการจัดการเรียนรู้' }}</dd>
     {% if (job.get('service_id') or 'lesson_plan') == 'lesson_plan' %}
     <dt>ไฟล์ที่ 1 (ฟอร์มโรงเรียน)</dt><dd>{{ job.files.template_original_name or '-' }}</dd>
-    <dt>ไฟล์ที่ 2 (ไฟล์ข้อมูล)</dt><dd>{{ job.files.source_original_name or 'ไม่ได้แนบ (จัดทำจากคำสั่งเพิ่มเติม)' }}</dd>
+    <dt>ไฟล์ที่ 2 (ไฟล์ข้อมูล)</dt><dd>{% set srcs = job.files.get('sources') or [] %}{% if srcs %}{% for s in srcs %}{{ s.original_name }}{% if not loop.last %}, {% endif %}{% endfor %}{% else %}{{ job.files.source_original_name or 'ไม่ได้แนบ (จัดทำจากคำสั่งเพิ่มเติม)' }}{% endif %}</dd>
     {% if job.files.source %}<dt>จำนวนแผนในไฟล์ข้อมูล</dt><dd>{{ job.get('plan_count') or 1 }} แผน{% if job.get('plan_numbers') and job.plan_numbers|length > 1 %} (แผนที่ {{ job.plan_numbers|join(', ') }}){% endif %}</dd>{% endif %}
     {% if instructions %}<dt>คำสั่งเพิ่มเติมถึงผู้จัดทำ</dt><dd style="white-space:pre-wrap">{{ instructions }}</dd>{% endif %}
     {% if job.get('options') %}<dt>ตัวเลือกเพิ่มเติม</dt><dd>{% for o in job.options %}<span class="tag">✔ {{ o }}</span> {% endfor %}</dd>{% endif %}

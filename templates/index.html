@@ -11,12 +11,12 @@
   <div class="grid">
   {% for key, label in uploads %}
   <div>
-    <label>{{ label }} {% if key in required_uploads %}<span class="req">*</span>{% else %}<span class="opt">(ไม่บังคับ)</span>{% endif %}<br><span class="opt">.doc, .docx, .pdf ไม่เกิน {{ max_mb }} MB{% if key not in required_uploads %} · ถ้าไม่แนบ ต้องพิมพ์คำสั่งเพิ่มเติมด้านล่าง{% endif %}</span></label>
-    <div class="drop" data-for="{{ key }}">
+    <label>{{ label }} {% if key in required_uploads %}<span class="req">*</span>{% else %}<span class="opt">(ไม่บังคับ)</span>{% endif %}<br><span class="opt">.doc, .docx, .pdf ไม่เกิน {{ max_mb }} MB{% if key == 'source' %} ต่อไฟล์ · เลือกได้หลายไฟล์ (สูงสุด {{ max_files }} ไฟล์){% endif %}{% if key not in required_uploads %} · ถ้าไม่แนบ ต้องพิมพ์คำสั่งเพิ่มเติมด้านล่าง{% endif %}</span></label>
+    <div class="drop" data-for="{{ key }}"{% if key == 'source' %} data-multi="1"{% endif %}>
       <div class="ic">{% if key == 'template' %}🏫{% else %}📄{% endif %}</div>
-      <div><b>คลิกเพื่อเลือกไฟล์</b><br>หรือลากไฟล์มาวางที่นี่</div>
+      <div><b>{% if key == 'source' %}คลิกเพื่อเลือกไฟล์ (เลือกได้หลายไฟล์){% else %}คลิกเพื่อเลือกไฟล์{% endif %}</b><br>หรือลากไฟล์มาวางที่นี่</div>
       <div class="fn"></div>
-      <input type="file" name="{{ key }}" id="{{ key }}" accept=".doc,.docx,.pdf">
+      <input type="file" name="{{ key }}" id="{{ key }}" accept=".doc,.docx,.pdf"{% if key == 'source' %} multiple{% endif %}>
     </div>
   </div>
   {% endfor %}
@@ -60,20 +60,55 @@
 </form>
 {% endblock %}
 {% block scripts %}<script>
-const MAX={{ max_mb }}*1048576, OK=['doc','docx','pdf'];
+const MAX={{ max_mb }}*1048576, OK=['doc','docx','pdf'], MAXFILES={{ max_files }};
+function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function assign(inp,files){const dt=new DataTransfer();files.forEach(f=>dt.items.add(f));inp.files=dt.files}
 document.querySelectorAll('.drop').forEach(drop=>{
   const inp=drop.querySelector('input'),fn=drop.querySelector('.fn');
-  const show=()=>{const f=inp.files[0];drop.classList.remove('bad');
-    if(!f){fn.textContent='';drop.classList.remove('has');return}
+  const multi=drop.dataset.multi==='1';
+  let held=[];
+  const valid=f=>{
     const ext=f.name.split('.').pop().toLowerCase();
-    if(!OK.includes(ext)){alert('รองรับเฉพาะไฟล์ .doc, .docx และ .pdf');inp.value='';fn.textContent='';drop.classList.remove('has');return}
-    if(f.size>MAX){alert('ไฟล์ใหญ่เกินไป (สูงสุด {{ max_mb }} MB)');inp.value='';fn.textContent='';drop.classList.remove('has');return}
-    fn.textContent='✔ '+f.name+' ('+(f.size/1048576).toFixed(2)+' MB)';drop.classList.add('has')};
-  drop.addEventListener('click',()=>inp.click());inp.addEventListener('click',e=>e.stopPropagation());
-  inp.addEventListener('change',show);
+    if(!OK.includes(ext)){alert('รองรับเฉพาะไฟล์ .doc, .docx และ .pdf');return false}
+    if(f.size>MAX){alert('ไฟล์ใหญ่เกินไป (สูงสุด {{ max_mb }} MB ต่อไฟล์)');return false}
+    return true;
+  };
+  const show=()=>{
+    const files=[...inp.files];
+    drop.classList.remove('bad');
+    if(!files.length){fn.innerHTML='';drop.classList.remove('has');return}
+    if(multi){
+      fn.innerHTML=files.map((f,i)=>'<div class="file-row"><span>✔ '+esc(f.name)+' ('+(f.size/1048576).toFixed(2)+' MB)</span><button type="button" class="rm" data-i="'+i+'" aria-label="ลบไฟล์">×</button></div>').join('');
+    } else {
+      const f=files[0];
+      fn.textContent='✔ '+f.name+' ('+(f.size/1048576).toFixed(2)+' MB)';
+    }
+    drop.classList.add('has');
+  };
+  const merge=incoming=>{
+    const add=[...incoming].filter(valid);
+    if(!add.length){if(!held.length){assign(inp,[]);show()}return}
+    if(!multi){held=[add[0]];assign(inp,held);show();return}
+    const cur=held.slice();
+    for(const f of add){
+      if(cur.length>=MAXFILES){alert('เลือกได้สูงสุด '+MAXFILES+' ไฟล์');break}
+      if(cur.some(x=>x.name===f.name&&x.size===f.size&&x.lastModified===f.lastModified)) continue;
+      cur.push(f);
+    }
+    held=cur;assign(inp,held);show();
+  };
+  drop.addEventListener('click',e=>{if(e.target.closest('.rm'))return;inp.click()});
+  fn.addEventListener('click',e=>{
+    const btn=e.target.closest('.rm');if(!btn)return;
+    e.preventDefault();e.stopPropagation();
+    const i=+btn.dataset.i;held=[...inp.files];held.splice(i,1);assign(inp,held);show();
+    if(inp.id==='source'&&typeof slowHint==='function')slowHint();
+  });
+  inp.addEventListener('click',e=>e.stopPropagation());
+  inp.addEventListener('change',()=>merge(inp.files));
   ['dragover','dragenter'].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.add('over')}));
   ['dragleave','drop'].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.remove('over')}));
-  drop.addEventListener('drop',ev=>{if(ev.dataTransfer.files.length){inp.files=ev.dataTransfer.files;show()}});
+  drop.addEventListener('drop',ev=>{if(ev.dataTransfer.files.length)merge(ev.dataTransfer.files)});
 });
 const MIN_INSTR={{ min_instr }},ta=document.getElementById('instructions'),src=document.getElementById('source');
 function slowHint(){const ill=[...document.querySelectorAll('input[name=options]')].some(c=>c.checked&&c.value==='ทำภาพประกอบเพิ่ม');

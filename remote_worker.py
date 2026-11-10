@@ -78,19 +78,42 @@ def download_inputs(job):
     d = os.path.join(WORK_DIR, job["id"])
     os.makedirs(d, exist_ok=True)
     local = {}
-    for kind in ("template", "source"):
-        url = job.get("urls", {}).get(kind)
-        name = (job.get("files") or {}).get(kind)
-        if not url or not name:
-            continue  # e.g. from_scratch jobs have no source file
+    # template (always at most one)
+    url = job.get("urls", {}).get("template")
+    name = (job.get("files") or {}).get("template")
+    if url and name:
         body = request("GET", url, raw=True, soft404=True)
         if body is None:
-            print(f"warning: {kind} file not available on server, skipped", file=sys.stderr)
+            print("warning: template file not available on server, skipped", file=sys.stderr)
+        else:
+            dest = os.path.join(d, "template" + os.path.splitext(name)[1])
+            with open(dest, "wb") as f:
+                f.write(body)
+            local["template"] = dest
+    # source file(s): files.sources[] for new jobs; files.source for older single-file jobs
+    sources = list((job.get("files") or {}).get("sources") or [])
+    if not sources and (job.get("files") or {}).get("source"):
+        sources = [{"stored": job["files"]["source"],
+                    "original_name": (job.get("files") or {}).get("source_original_name"),
+                    "index": 0}]
+    local_sources = []
+    for i, s in enumerate(sources):
+        url = (job.get("urls") or {}).get("source" if i == 0 else f"source_{i}")
+        stored = (s or {}).get("stored") if isinstance(s, dict) else None
+        if not url or not stored:
             continue
-        dest = os.path.join(d, kind + os.path.splitext(name)[1])
+        body = request("GET", url, raw=True, soft404=True)
+        if body is None:
+            print(f"warning: source file {stored} not available on server, skipped", file=sys.stderr)
+            continue
+        dest = os.path.join(d, stored)
         with open(dest, "wb") as f:
             f.write(body)
-        local[kind] = dest
+        entry = {"path": dest, "original_name": (s or {}).get("original_name") or stored, "index": i}
+        local_sources.append(entry)
+        if i == 0:
+            local["source"] = dest  # backward compatible single path
+    local["sources"] = local_sources
     # generic service uploads
     uploads = (job.get("files") or {}).get("uploads") or []
     local_uploads = []
@@ -190,7 +213,11 @@ def main(argv):
             "instructions": job.get("instructions") or job.get("note") or "",
             "options": job.get("options") or [], "eta_factor": job.get("eta_factor") or 1.0,
             "original_names": {"template": (job.get("files") or {}).get("template_original_name"),
-                               "source": (job.get("files") or {}).get("source_original_name")},
+                               "source": (job.get("files") or {}).get("source_original_name"),
+                               "sources": [((s or {}).get("original_name") if isinstance(s, dict) else s)
+                                           for s in ((job.get("files") or {}).get("sources") or [])]
+                                          or ([ (job.get("files") or {}).get("source_original_name") ]
+                                              if (job.get("files") or {}).get("source") else [])},
             "local_dir": d, "local_paths": local}); return 0
     if cmd == "show" and args:
         pr(request("GET", f"/api/worker/{args[0]}")["job"]); return 0
