@@ -94,10 +94,11 @@ def default_settings():
         "promptpay_id": DEFAULT_PROMPTPAY_ID,
         "qr_image": "promptpay_qr.png" if os.path.isfile(QR_IMAGE_PATH) else None,
         "qr_decoded_id": None,
-        "points_topup_enabled": False,
+        "points_topup_enabled": True,
         "points_packages": list(DEFAULT_POINTS_PACKAGES),
-        # Owner toggle: 1 free use per Google account + promo top-up popup. DEFAULT OFF.
-        "free_trial_mode": False,
+        # Owner toggle: 1 free use per Google account + promo top-up popup. DEFAULT ON
+        # (survives Render free-plan disk wipes / redeploys).
+        "free_trial_mode": True,
     }
 
 
