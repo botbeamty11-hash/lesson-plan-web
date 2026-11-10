@@ -1,4 +1,5 @@
 import hmac, json, logging, os, shutil, threading, urllib.request
+import webhook
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 try:  # local development only; on Render, env vars come from the dashboard
@@ -23,7 +24,6 @@ ALLOWED_SERVICE = {".doc", ".docx", ".pdf", ".pptx", ".xlsx", ".xls", ".csv",
 MAX_MB = 20
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
 WORKER_TOKEN = os.environ.get("WORKER_TOKEN", "")
-WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "").strip()
 GOOGLE_CLIENT_ID = (os.environ.get("GOOGLE_CLIENT_ID") or "").strip()
 GOOGLE_CLIENT_SECRET = (os.environ.get("GOOGLE_CLIENT_SECRET") or "").strip()
 GOOGLE_OAUTH_READY = bool(GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET)
@@ -212,18 +212,16 @@ def inject_globals():
     }
 
 
-def fire_webhook(job_id):
-
-    if not WEBHOOK_URL:
-        return
-    def run():
+def fire_webhook(job_id, event="job_queued", service_id=None):
+    """Notify Grok Bot when a job is queued or a slip is waiting for review."""
+    if service_id is None:
         try:
-            req = urllib.request.Request(WEBHOOK_URL, data=json.dumps({"job_id": job_id}).encode(),
-                                         headers={"Content-Type": "application/json"}, method="POST")
-            urllib.request.urlopen(req, timeout=10).read()
-        except Exception as e:
-            app.logger.warning("webhook failed: %s", e)
-    threading.Thread(target=run, daemon=True).start()
+            j = store.load(job_id)
+            if j:
+                service_id = j.get("service_id") or ""
+        except Exception:
+            service_id = None
+    webhook.notify(event, job_id, service_id)
 
 
 @app.errorhandler(413)
@@ -701,6 +699,7 @@ def pay_page(job_id):
                 store.save(j)
             return redirect(url_for("pay_page", job_id=job_id))
         flash("อัปโหลดสลิปแล้ว รอตรวจสอบการชำระเงิน")
+        fire_webhook(job_id, event="payment_review", service_id=job.get("service_id"))
         return redirect(url_for("job_page", job_id=job_id))
     settings = store.load_settings()
     pay = job["payment"]
