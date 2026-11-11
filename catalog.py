@@ -666,6 +666,50 @@ ADDON_POINTS = {
 }
 
 
+# Advertised per-plan points levels for lesson_plan (charging still uses lesson_plan_points_cost).
+LESSON_PLAN_POINTS_MIN = 5
+LESSON_PLAN_POINTS_MAX = 12
+
+
+def points_range(service):
+    """(min, max) when a service has more than one advertised points level, else None.
+
+    lesson_plan is 5–12 per plan. Other services may declare points_min / points_max.
+    Display only — does not change charging.
+    """
+    if not service:
+        return None
+    if (service.get("id") or "") == "lesson_plan":
+        return (LESSON_PLAN_POINTS_MIN, LESSON_PLAN_POINTS_MAX)
+    lo, hi = service.get("points_min"), service.get("points_max")
+    try:
+        if lo is not None and hi is not None:
+            lo, hi = int(lo), int(hi)
+            if hi > lo > 0:
+                return (lo, hi)
+    except (TypeError, ValueError):
+        pass
+    return None
+
+
+def points_price_label(service):
+    """Thai label for the advertised points price. Range when there are levels, else a single amount."""
+    if not service:
+        return ""
+    try:
+        cost = int(service.get("points_cost") or 0)
+    except (TypeError, ValueError):
+        cost = 0
+    rng = points_range(service)
+    if not rng and cost <= 0:
+        return ""
+    unit = (" " + unit_label(service.get("unit"))) if service.get("unit") == "per_plan" else ""
+    if rng:
+        lo, hi = rng
+        return f"ราคาเริ่มต้น {lo} ถึง {hi} พ้อยท์{unit}"
+    return f"{cost} พ้อยท์{unit}"
+
+
 def lesson_plan_points_cost(service=None, plan_count=1, options=None, addons=None):
     """Points for a lesson-plan order. 1 point ≈ 1 THB.
 

@@ -4,8 +4,9 @@
 <form class="card" method="post" action="/submit" enctype="multipart/form-data" id="f" novalidate>
   <p class="crumb"><a href="/">หน้าแรก</a> · แผนการสอน</p>
   <h1>📘 แผนการจัดการเรียนรู้</h1>
-  {% if free_trial_mode and service and service.points_cost and service.points_cost > 0 %}
-  <div class="price-note pts-cost">{{ service.points_cost }} พ้อยท์ / แผน <span class="opt">(สั้น 5 · มาตรฐาน 8 · ละเอียด 12 — คูณจำนวนแผน)</span></div>
+  {% set pts = points_price_label(service) if service else '' %}
+  {% if free_trial_mode and pts %}
+  <div class="price-note pts-cost">{{ pts }} <span class="opt">(สั้น 5 · มาตรฐาน 8 · ละเอียด 12 — คูณจำนวนแผน)</span></div>
   {% endif %}
   <p class="sub">อัปโหลดฟอร์มแผนการสอนของโรงเรียน (บังคับ) และไฟล์ข้อมูลต้นฉบับ (ถ้ามี) ระบบจะนำข้อมูลมาจัดลงฟอร์มของโรงเรียนให้ — ถ้าไม่มีไฟล์ข้อมูล ให้พิมพ์คำสั่งเพิ่มเติมว่าต้องการแผนวิชา/ชั้น/เรื่องอะไร</p>
   <div class="grid">

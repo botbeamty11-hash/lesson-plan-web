@@ -96,6 +96,17 @@ class FreeTrialTest(unittest.TestCase):
         self.assertEqual(fn(svc, 2, [], []), 10)  # 5×2
         self.assertEqual(fn(svc, 2, [], ["addon_slides"]), 8 * 2 + 10)
 
+    def test_points_price_label_range_vs_single(self):
+        lp = self.catalog.get_service("lesson_plan")
+        self.assertEqual(self.catalog.points_range(lp), (5, 12))
+        self.assertEqual(self.catalog.points_price_label(lp), "ราคาเริ่มต้น 5 ถึง 12 พ้อยท์ ต่อแผน")
+        pdf = self.catalog.get_service("pdf_merge")
+        self.assertIsNone(self.catalog.points_range(pdf))
+        self.assertEqual(self.catalog.points_price_label(pdf), "1 พ้อยท์")
+        # optional explicit range on a generic service
+        other = {"id": "custom", "points_cost": 9, "points_min": 3, "points_max": 15}
+        self.assertEqual(self.catalog.points_price_label(other), "ราคาเริ่มต้น 3 ถึง 15 พ้อยท์")
+
     def test_mode_off_home_shows_free_not_points(self):
         r = self.client.get("/")
         body = r.get_data(as_text=True)
@@ -114,8 +125,16 @@ class FreeTrialTest(unittest.TestCase):
         r2 = self.client.get("/services")
         body2 = r2.get_data(as_text=True)
         self.assertIn("พ้อยท์", body2)
-        self.assertIn("8 พ้อยท์", body2)  # lesson_plan
-        self.assertIn("1 พ้อยท์", body2)  # pdf merge etc.
+        self.assertIn("ราคาเริ่มต้น 5 ถึง 12 พ้อยท์ ต่อแผน", body2)  # lesson_plan range, not mid price
+        self.assertNotIn("8 พ้อยท์ / แผน", body2)
+        self.assertIn("1 พ้อยท์", body2)  # pdf merge etc. (single price)
+        r3 = self.client.get("/group/แผนการสอน")
+        self.assertEqual(r3.status_code, 200)
+        self.assertIn("ราคาเริ่มต้น 5 ถึง 12 พ้อยท์ ต่อแผน", r3.get_data(as_text=True))
+        r4 = self.client.get("/plan")
+        body4 = r4.get_data(as_text=True)
+        self.assertIn("ราคาเริ่มต้น 5 ถึง 12 พ้อยท์ ต่อแผน", body4)
+        self.assertNotIn(">8 พ้อยท์ / แผน", body4)
 
     def test_charge_mode_off_never_deducts(self):
         u = self._login("off@example.com")

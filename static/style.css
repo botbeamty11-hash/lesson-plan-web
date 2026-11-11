@@ -316,7 +316,7 @@ dl.meta dt{color:var(--mut)}dl.meta dd{margin:0}
 
 /* —— Points / promo modal (free-trial mode) —— */
 .svc-pts,.pts-cost{display:inline-block;margin-top:6px;padding:3px 10px;border-radius:999px;
-  background:#E6F7F2;color:#0F6B56;font-weight:700;font-size:.85rem}
+  background:#E6F7F2;color:#0F6B56;font-weight:700;font-size:.85rem;line-height:1.35;white-space:normal}
 .pts-cost{margin:8px 0 4px;font-size:.95rem}
 .pts.free-left{background:#FEF3C7;color:#92400E}
 .promo-overlay{position:fixed;inset:0;background:rgba(15,40,35,.55);z-index:80;

@@ -210,6 +210,7 @@ def inject_globals():
         "brand": brand,
         "site_name": brand.SITE_NAME,
         "site_url": brand.SITE_URL,
+        "points_price_label": catalog.points_price_label,
     }
 
 
